@@ -3,10 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class EventService {
@@ -29,12 +29,14 @@ export class EventService {
       );
       bannerUrl = upload;
     }
+    const price = Number(dto.price);
+    const maxTickets = Number(dto.maxTickets);
 
     return this.prisma.event.create({
       data: {
         name: dto.name,
-        price: dto.price,
-        maxTickets: dto.maxTickets,
+        price,
+        maxTickets,
         organizerId: userId,
         date: dto.date,
         isActive: true,
@@ -66,12 +68,15 @@ export class EventService {
       bannerUrl = upload;
     }
 
+    const price = Number(dto.price);
+    const maxTickets = Number(dto.maxTickets);
+
     return this.prisma.event.update({
       where: { id: eventId },
       data: {
         name: dto.name || event.name,
-        price: dto.price ?? event.price,
-        maxTickets: dto.maxTickets ?? event.maxTickets,
+        price: price ?? event.price,
+        maxTickets: maxTickets ?? event.maxTickets,
         date: dto.date || event.date,
         bannerUrl,
       },

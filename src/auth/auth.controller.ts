@@ -1,4 +1,4 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -15,6 +15,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @HttpCode(201)
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @ApiOperation({
     summary: 'Register a new user',
@@ -57,6 +58,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @HttpCode(200)
   @Throttle({ default: { limit: 1, ttl: 60 } })
   @ApiOperation({
     summary: 'User login',
@@ -97,6 +99,7 @@ export class AuthController {
   }
 
   @Post('resend-otp')
+  @HttpCode(200)
   @Throttle({ default: { limit: 1, ttl: 60000 } })
   @ApiOperation({
     summary: 'Resend OTP',
@@ -138,6 +141,7 @@ export class AuthController {
   }
 
   @Post('verify-otp')
+  @HttpCode(200)
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @ApiOperation({
     summary: 'Verify OTP',
@@ -179,6 +183,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @HttpCode(200)
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @ApiOperation({
     summary: 'Forgot password',
@@ -210,6 +215,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @HttpCode(200)
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @ApiOperation({
     summary: 'Reset password',

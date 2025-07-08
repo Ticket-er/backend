@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -13,8 +13,8 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { JwtService } from '@nestjs/jwt';
-import { generateOTP, getOtpExpiry } from 'src/common/utils/otp.util';
-import { MailService } from 'src/mail/mail.service';
+import { generateOTP, getOtpExpiry } from '../common/utils/otp.util';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class AuthService {

@@ -16,10 +16,6 @@ export class UpdateEventDto {
   name?: string;
 
   @IsOptional()
-  @IsString({ message: 'Metadata URI must be a string' })
-  metadataURI?: string;
-
-  @IsOptional()
   @IsNumber({}, { message: 'Price must be a number' })
   @Min(0, { message: 'Price must be at least 0' })
   price?: number;

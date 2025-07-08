@@ -11,6 +11,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  HttpCode,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { EventService } from './event.service';
@@ -40,6 +41,7 @@ export class EventController {
   constructor(private eventService: EventService) {}
 
   @Get()
+  @HttpCode(200)
   @ApiOperation({
     summary: 'Get all active events with optional filters',
     description:
@@ -79,7 +81,8 @@ export class EventController {
   }
 
   @Post()
-  @Roles(Role.ORGANIZER)
+  @HttpCode(201)
+  @Roles('ORGANIZER')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
@@ -124,6 +127,7 @@ export class EventController {
   }
 
   @Get('user/my')
+  @HttpCode(200)
   @ApiOperation({
     summary: 'Get user’s attended events',
     description:
@@ -143,6 +147,7 @@ export class EventController {
   }
 
   @Get('upcoming')
+  @HttpCode(200)
   @ApiOperation({
     summary: 'Get upcoming events',
     description: 'Retrieves all active events with a future date.',
@@ -157,6 +162,7 @@ export class EventController {
   }
 
   @Get('past')
+  @HttpCode(200)
   @ApiOperation({
     summary: 'Get past events',
     description: 'Retrieves all active events with a past date.',
@@ -171,7 +177,8 @@ export class EventController {
   }
 
   @Get('organizer/my')
-  @Roles(Role.ORGANIZER)
+  @HttpCode(200)
+  @Roles('ORGANIZER')
   @ApiOperation({
     summary: 'Get organizer’s events',
     description: 'Retrieves all events created by the authenticated organizer.',
@@ -194,7 +201,7 @@ export class EventController {
   }
 
   @Patch(':id')
-  @Roles(Role.ORGANIZER)
+  @Roles('ORGANIZER')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
@@ -246,7 +253,7 @@ export class EventController {
   }
 
   @Patch(':id/toggle')
-  @Roles(Role.ORGANIZER)
+  @Roles('ORGANIZER')
   @ApiOperation({
     summary: 'Toggle event status',
     description:

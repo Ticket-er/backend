@@ -15,6 +15,7 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { PaymentService } from './payment/payment.service';
 import { PaymentModule } from './payment/payment.module';
 import { HttpModule } from '@nestjs/axios';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { HttpModule } from '@nestjs/axios';
     CloudinaryModule,
     PaymentModule,
     HttpModule,
+    WalletModule,
   ],
   controllers: [AppController, TicketController],
   providers: [AppService, EventService, TicketService, PaymentService],

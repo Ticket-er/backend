@@ -18,13 +18,15 @@ export class PaymentService {
   ) {}
 
   async initiatePayment(data: InitiateDto): Promise<string> {
-    const response = await this.httpService
-      .post(`${this.paymentBaseUrl}/api/v1/initiate`, data, {
+    const response = await this.httpService.axiosRef.post(
+      `${this.paymentBaseUrl}/api/v1/initiate`,
+      data,
+      {
         headers: {
           Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
         },
-      })
-      .toPromise();
+      },
+    );
 
     return response?.data?.checkout_url ?? null;
   }
@@ -50,8 +52,8 @@ export class PaymentService {
       });
 
       if (!transaction) throw new NotFoundException('Transaction not found');
-      if (transaction.status === 'SUCCESS')
-        throw new BadRequestException('Transaction already verified');
+      // if (transaction.status === 'SUCCESS')
+      //   throw new BadRequestException('Transaction already verified');
 
       // Mark transaction as successful
       await this.prisma.transaction.update({
@@ -73,15 +75,27 @@ export class PaymentService {
           data: { minted: { increment: 1 } },
         });
 
-        // Organizer gets 5% commission
-        const organizerCut = Math.floor(
+        const platformCut = Math.floor(
           (transaction.amount * transaction.event.primaryFeeBps) / 10000,
-        );
+        ); // 5%
+        const organizerProceed = Math.floor(transaction.amount - platformCut);
 
         await this.prisma.wallet.update({
           where: { userId: transaction.event.organizerId },
-          data: { balance: { increment: organizerCut } },
+          data: { balance: { increment: organizerProceed } },
         });
+
+        // Pay platform cut to admin account (kareola960@gmail.com)
+        const platformAdmin = await this.prisma.user.findUnique({
+          where: { email: 'kareola960@gmail.com' },
+        });
+
+        if (platformAdmin) {
+          await this.prisma.wallet.update({
+            where: { userId: platformAdmin.id },
+            data: { balance: { increment: platformCut } },
+          });
+        }
       }
 
       // Resale purchase flow
