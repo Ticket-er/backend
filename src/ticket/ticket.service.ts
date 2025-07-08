@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/require-await */
 import {
   BadRequestException,
   ForbiddenException,
@@ -8,35 +7,81 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BuyNewDto } from './dto/buy-new.dto';
 import { ListResaleDto } from './dto/list-resale.dto';
+import { PaymentService } from 'src/payment/payment.service';
 
 @Injectable()
 export class TicketService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private paymentService: PaymentService,
+  ) {}
 
   async buyNewTicket(dto: BuyNewDto, userId: string) {
-    // TODO: integrate payment gateway before creating ticket
+    // Step 1: Validate event
     const event = await this.prisma.event.findUnique({
       where: { id: dto.eventId },
     });
     if (!event || !event.isActive)
-      throw new NotFoundException('Event not found or inactive');
+      throw new NotFoundException('Event not available');
     if (event.date < new Date())
       throw new BadRequestException('Event already passed');
-    if (event.minted >= event.maxTickets)
-      throw new BadRequestException('Sold out');
 
-    // increment event.minted
-    await this.prisma.event.update({
-      where: { id: dto.eventId },
-      data: { minted: { increment: 1 } },
+    // Step 2: Validate user
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
     });
+    if (!user) throw new NotFoundException('User not found');
 
-    return this.prisma.ticket.create({
-      data: {
-        userId,
-        eventId: dto.eventId,
-      },
-    });
+    // Step 3: Generate unique reference
+    const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // Step 4: Create pending transaction
+    try {
+      await this.prisma.transaction.create({
+        data: {
+          reference,
+          userId,
+          eventId: dto.eventId,
+          type: 'PRIMARY',
+          status: 'PENDING',
+          amount: event.price,
+        },
+      });
+    } catch {
+      throw new BadRequestException('Failed to create transaction');
+    }
+
+    // Step 5: Attempt to initiate payment
+    let checkoutUrl: string | null = null;
+    try {
+      const url = await this.paymentService.initiatePayment({
+        customer: { email: user.email, name: user.name },
+        amount: event.price,
+        currency: 'NGN',
+        reference,
+        processor: 'kora',
+        narration: `Ticket for ${event.name}`,
+        metadata: {},
+      });
+
+      checkoutUrl = url;
+
+      if (!checkoutUrl) {
+        throw new Error('Missing checkout URL from payment provider');
+      }
+    } catch {
+      // Optionally delete transaction or update to failed
+      await this.prisma.transaction.updateMany({
+        where: { reference },
+        data: { status: 'FAILED' },
+      });
+      throw new BadRequestException(
+        'Payment initialization failed. Please try again.',
+      );
+    }
+
+    // Step 6: Return successful checkout URL
+    return { checkoutUrl };
   }
 
   async listForResale(ticketId: string, dto: ListResaleDto, userId: string) {
@@ -85,35 +130,83 @@ export class TicketService {
   }
 
   async buyResaleTicket(ticketId: string, buyerId: string) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id: ticketId },
-    });
-    if (!ticket) throw new NotFoundException('Ticket not found');
-    if (!ticket.isListed || ticket.resalePrice == null)
-      throw new BadRequestException('Ticket not for sale');
-    if (ticket.userId === buyerId)
-      throw new BadRequestException('Cannot buy your own ticket');
+    try {
+      const ticket = await this.prisma.ticket.findUnique({
+        where: { id: ticketId },
+        include: { event: true, user: true },
+      });
 
-    // calculate commission & seller proceeds
-    const commission = Math.floor((ticket.resalePrice * 5) / 100);
-    const sellerProceeds = ticket.resalePrice - commission;
+      if (!ticket) {
+        throw new NotFoundException('Ticket not found');
+      }
 
-    // TODO: integrate payment gateway here:
-    //  - charge buyer ticket.resalePrice
-    //  - send sellerProceeds to original user
-    //  - send commission to organizer (5%)
+      if (!ticket.isListed || ticket.resalePrice == null) {
+        throw new BadRequestException('Ticket is not listed for resale');
+      }
 
-    return this.prisma.ticket.update({
-      where: { id: ticketId },
-      data: {
-        userId: buyerId,
-        isListed: false,
-        resalePrice: null,
-        soldTo: buyerId,
-        resaleCount: { increment: 1 },
-        resaleCommission: commission,
-      },
-    });
+      if (ticket.userId === buyerId) {
+        throw new BadRequestException('You cannot buy your own ticket');
+      }
+
+      const buyer = await this.prisma.user.findUnique({
+        where: { id: buyerId },
+      });
+
+      if (!buyer) {
+        throw new NotFoundException('Buyer not found');
+      }
+
+      const reference = `resale_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+      // Create transaction record
+      await this.prisma.transaction.create({
+        data: {
+          reference,
+          userId: buyerId,
+          eventId: ticket.eventId,
+          ticketId,
+          amount: ticket.resalePrice,
+          type: 'RESALE',
+          status: 'PENDING',
+        },
+      });
+
+      // Initiate payment
+      const checkoutUrl = await this.paymentService.initiatePayment({
+        customer: {
+          email: buyer.email,
+          name: buyer.name,
+        },
+        amount: ticket.resalePrice,
+        currency: 'NGN',
+        reference,
+        processor: 'kora',
+        narration: `Resale ticket for ${ticket.event.name}`,
+        metadata: {},
+      });
+
+      if (!checkoutUrl) {
+        // Clean up the pending transaction if no checkout was created
+        await this.prisma.transaction.delete({ where: { reference } });
+        throw new BadRequestException('Failed to generate payment link');
+      }
+
+      return { checkoutUrl };
+    } catch (error) {
+      console.error('[Buy Resale Ticket Error]', error);
+
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        error?.response?.data?.message ||
+          'Something went wrong while buying resale ticket',
+      );
+    }
   }
 
   async getMyListings(userId: string) {

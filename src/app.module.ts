@@ -12,6 +12,9 @@ import { TicketController } from './ticket/ticket.controller';
 import { TicketService } from './ticket/ticket.service';
 import { TicketModule } from './ticket/ticket.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
+import { PaymentService } from './payment/payment.service';
+import { PaymentModule } from './payment/payment.module';
+import { HttpModule } from '@nestjs/axios';
 
 @Module({
   imports: [
@@ -30,8 +33,10 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
     EventModule,
     TicketModule,
     CloudinaryModule,
+    PaymentModule,
+    HttpModule,
   ],
   controllers: [AppController, TicketController],
-  providers: [AppService, EventService, TicketService],
+  providers: [AppService, EventService, TicketService, PaymentService],
 })
 export class AppModule {}
