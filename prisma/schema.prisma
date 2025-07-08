@@ -1,0 +1,120 @@
+/// ───────────────────────────────────────────────────────────
+/// Add to your existing schema.prisma
+/// ───────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  name          String
+  role          Role      @default(USER)
+  isVerified    Boolean   @default(false)
+  refreshToken  String?
+  otp           String?
+  otpExpiresAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // ─── Wallet fields ───
+  wallet        Wallet?   
+
+  // ─── Relations ───
+  events        Event[]    
+  tickets       Ticket[]    
+  transactions  Transaction[] 
+}
+
+model Wallet {
+  id         String    @id @default(cuid())
+  user       User      @relation(fields: [userId], references: [id])
+  userId     String    @unique
+  balance    Decimal   @default("0.00")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Event {
+  id          String     @id @default(cuid())
+  name        String
+  metadataURI String
+  price       Int
+  maxTickets  Int
+  minted      Int        @default(0)
+  isActive    Boolean    @default(true)
+  date        DateTime
+  organizer   User       @relation(fields: [organizerId], references: [id])
+  organizerId String
+  createdAt   DateTime   @default(now())
+
+  primaryFeeBps     Int    @default(500)   // 5 % on first sale
+  resaleFeeBps      Int    @default(500)   // 5 % platform fee on resale
+  royaltyFeeBps     Int    @default(500)   // 5 % organizer royalty on resale
+
+  tickets     Ticket[]
+  transactions Transaction[] // all purchase/resale txns for this event
+}
+
+model Ticket {
+  id               String     @id @default(cuid())
+
+  user             User       @relation(fields: [userId], references: [id])
+  userId           String
+
+  event            Event      @relation(fields: [eventId], references: [id])
+  eventId          String
+
+  isUsed           Boolean    @default(false)
+  isListed         Boolean    @default(false)
+  resalePrice      Int?
+  listedAt         DateTime?
+  soldTo           String?    
+  resaleCount      Int        @default(0)
+  resaleCommission Int?       
+
+  Transaction      Transaction[]
+
+  createdAt        DateTime   @default(now())
+
+
+}
+
+model Transaction {
+  id             String    @id @default(cuid())
+  type           TxType    
+  amount         Decimal   // in your smallest currency unit (cents, kobo, etc)
+  fee            Decimal   // platform commission portion
+  royalty        Decimal   // organizer cut
+  netAmount      Decimal   // amount after fee and royalty are deducted, credited to seller/organizer
+
+  user           User      @relation(fields: [userId], references: [id])
+  userId         String    // the seller or buyer (depending on type)
+
+  event          Event     @relation(fields: [eventId], references: [id])
+  eventId        String
+
+  ticket         Ticket?   @relation(fields: [ticketId], references: [id])
+  ticketId       String?
+
+  createdAt      DateTime  @default(now())
+}
+
+enum Role {
+  USER
+  ORGANIZER
+}
+
+enum TxType {
+  PURCHASE      // initial ticket sale
+  RESALE        // secondary sale
+  COMMISSION    // platform fee collected
+}
