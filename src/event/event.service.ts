@@ -6,39 +6,74 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 
 @Injectable()
 export class EventService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cloudinary: CloudinaryService,
+  ) {}
 
-  async createEvent(dto: CreateEventDto, userId: string) {
+  async createEvent(
+    dto: CreateEventDto,
+    userId: string,
+    file?: Express.Multer.File,
+  ) {
+    let bannerUrl: string | undefined;
+
+    if (file) {
+      const upload = await this.cloudinary.uploadImage(
+        file,
+        'ticket-er/events',
+      );
+      bannerUrl = upload;
+    }
+
     return this.prisma.event.create({
       data: {
         name: dto.name,
-        metadataURI: dto.metadataURI,
         price: dto.price,
         maxTickets: dto.maxTickets,
         organizerId: userId,
-        isActive: true,
         date: dto.date,
+        isActive: true,
+        bannerUrl,
       },
     });
   }
 
-  async updateEvent(id: string, dto: UpdateEventDto, userId: string) {
-    const event = await this.prisma.event.findUnique({ where: { id } });
+  async updateEvent(
+    eventId: string,
+    dto: UpdateEventDto,
+    userId: string,
+    file?: Express.Multer.File,
+  ) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) throw new NotFoundException('Event not found');
     if (event.organizerId !== userId)
       throw new ForbiddenException('Access denied');
 
+    let bannerUrl = event.bannerUrl;
+
+    if (file) {
+      const upload = await this.cloudinary.uploadImage(
+        file,
+        'ticket-er/events',
+      );
+      bannerUrl = upload;
+    }
+
     return this.prisma.event.update({
-      where: { id },
+      where: { id: eventId },
       data: {
-        name: dto.name,
-        metadataURI: dto.metadataURI,
-        price: dto.price,
-        maxTickets: dto.maxTickets,
-        date: dto.date,
+        name: dto.name || event.name,
+        price: dto.price ?? event.price,
+        maxTickets: dto.maxTickets ?? event.maxTickets,
+        date: dto.date || event.date,
+        bannerUrl,
       },
     });
   }

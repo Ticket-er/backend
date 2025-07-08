@@ -18,6 +18,7 @@ model User {
   password      String
   name          String
   role          Role      @default(USER)
+  profileImage   String?
   isVerified    Boolean   @default(false)
   refreshToken  String?
   otp           String?
@@ -46,7 +47,7 @@ model Wallet {
 model Event {
   id          String     @id @default(cuid())
   name        String
-  metadataURI String
+  bannerUrl      String?
   price       Int
   maxTickets  Int
   minted      Int        @default(0)
@@ -89,32 +90,37 @@ model Ticket {
 }
 
 model Transaction {
-  id             String    @id @default(cuid())
-  type           TxType    
-  amount         Decimal   // in your smallest currency unit (cents, kobo, etc)
-  fee            Decimal   // platform commission portion
-  royalty        Decimal   // organizer cut
-  netAmount      Decimal   // amount after fee and royalty are deducted, credited to seller/organizer
-
-  user           User      @relation(fields: [userId], references: [id])
-  userId         String    // the seller or buyer (depending on type)
-
-  event          Event     @relation(fields: [eventId], references: [id])
-  eventId        String
-
-  ticket         Ticket?   @relation(fields: [ticketId], references: [id])
+  id             String   @id @default(cuid())
+  reference      String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  userId         String
+  ticket         Ticket?  @relation(fields: [ticketId], references: [id])
   ticketId       String?
-
-  createdAt      DateTime  @default(now())
+  event          Event    @relation(fields: [eventId], references: [id])
+  eventId        String
+  type           TransactionType
+  amount         Int
+  status         TransactionStatus
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
+
+enum TransactionType {
+  PRIMARY
+  RESALE
+  WITHDRAW
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 
 enum Role {
   USER
   ORGANIZER
-}
-
-enum TxType {
-  PURCHASE      // initial ticket sale
-  RESALE        // secondary sale
-  COMMISSION    // platform fee collected
+  ADMIN
+  SUPERADMIN
 }

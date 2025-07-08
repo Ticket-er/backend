@@ -15,10 +15,6 @@ export class CreateEventDto {
   })
   name: string;
 
-  @IsString({ message: 'Metadata URI must be a string' })
-  @IsNotEmpty({ message: 'Metadata URI is required' })
-  metadataURI: string;
-
   @IsNumber({}, { message: 'Ticket price must be a number' })
   @Min(0, { message: 'Ticket price must be at least 0 (free or paid)' })
   price: number;

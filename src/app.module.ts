@@ -11,6 +11,7 @@ import { EventModule } from './event/event.module';
 import { TicketController } from './ticket/ticket.controller';
 import { TicketService } from './ticket/ticket.service';
 import { TicketModule } from './ticket/ticket.module';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TicketModule } from './ticket/ticket.module';
     }),
     EventModule,
     TicketModule,
+    CloudinaryModule,
   ],
   controllers: [AppController, TicketController],
   providers: [AppService, EventService, TicketService],
