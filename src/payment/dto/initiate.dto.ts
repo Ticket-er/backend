@@ -41,6 +41,10 @@ export class InitiateDto {
   @IsOptional()
   narration?: string;
 
+  @IsString()
+  @IsOptional()
+  notification_url?: string;
+
   @IsObject()
   @IsOptional()
   metadata?: Record<string, any>;

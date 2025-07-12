@@ -88,6 +88,7 @@ export class TicketService {
         reference,
         processor: 'kora',
         narration: `Tickets for ${event.name}`,
+        notification_url: `${process.env.NOTIFICATION_URL}`,
         metadata: { ticketIds },
       });
 
@@ -188,6 +189,7 @@ export class TicketService {
         reference,
         processor: 'kora',
         narration: `Resale tickets for ${tickets[0].event.name}`,
+        notification_url: `${process.env.NOTIFICATION_URL}`,
         metadata: { ticketIds: dto.ticketIds },
       });
 
