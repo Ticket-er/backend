@@ -21,6 +21,7 @@ import {
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { BuyResaleDto } from './dto/buy-resale.dto';
 
 @ApiTags('Tickets')
 @UseGuards(JwtGuard)
@@ -30,93 +31,130 @@ export class TicketController {
   constructor(private ticketService: TicketService) {}
 
   @Post(':eventId/buy')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Buy a new ticket',
-    description:
-      'Purchases a new ticket for the specified event for the authenticated user.',
+    description: 'Purchases a new ticket for a specific event.',
   })
   @ApiParam({
     name: 'eventId',
     description: 'UUID of the event',
-    type: String,
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
   @ApiBody({
-    description: 'Ticket purchase data',
-    schema: {
-      type: 'object',
-      properties: {
-        eventId: {
-          type: 'string',
-          example: '123e4567-e89b-12d3-a456-426614174000',
-          description: 'UUID of the event to buy a ticket for',
-        },
-      },
-      required: ['eventId'],
-    },
+    description: 'Payload to specify how many tickets to buy',
+    type: BuyNewDto,
   })
   @ApiResponse({
     status: 201,
-    description: 'Ticket purchased successfully',
-    type: Object,
-  })
-  @ApiResponse({ status: 404, description: 'Event not found or inactive' })
-  @ApiResponse({ status: 400, description: 'Event already passed or sold out' })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized: JWT token missing or invalid',
-  })
-  buyNew(@Body() dto: BuyNewDto, @Req() req) {
-    return this.ticketService.buyNewTicket(dto, req.user.sub);
-  }
-
-  @Post(':ticketId/resell')
-  @ApiOperation({
-    summary: 'List ticket for resale',
-    description: 'Lists a ticket for resale by the authenticated user.',
-  })
-  @ApiParam({
-    name: 'ticketId',
-    description: 'UUID of the ticket',
-    type: String,
-    example: '789a123b-456c-78d9-e012-3456789f1234',
-  })
-  @ApiBody({
-    description: 'Resale listing data',
+    description: 'Ticket purchase initiated, returns checkout URL',
     schema: {
       type: 'object',
       properties: {
-        resalePrice: {
-          type: 'number',
-          example: 75.0,
-          description: 'Price for the ticket resale (minimum 0)',
+        checkoutUrl: {
+          type: 'string',
+          example: 'https://checkout.kora.com/pay/abc123',
         },
       },
-      required: ['resalePrice'],
     },
+  })
+  @ApiResponse({ status: 404, description: 'Event not found or inactive' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid quantity or event expired',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  buyNew(
+    @Param('eventId') eventId: string,
+    @Body() dto: BuyNewDto,
+    @Req() req,
+  ) {
+    dto.eventId = eventId;
+    return this.ticketService.buyNewTicket(dto, req.user.sub);
+  }
+
+  @Post('resale/buy')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Buy resale tickets',
+    description:
+      'Allows a user to buy one or more resale tickets listed by other users.',
+  })
+  @ApiBody({
+    type: BuyResaleDto,
+    description:
+      'Payload with ticket IDs of resale tickets the user wants to buy.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Ticket listed for resale successfully',
-    type: Object,
+    description:
+      'Resale transaction initiated successfully, returns checkout URL',
+    schema: {
+      type: 'object',
+      properties: {
+        checkoutUrl: {
+          type: 'string',
+          example: 'https://checkout.kora.com/pay/resale_xyz123',
+        },
+      },
+    },
   })
-  @ApiResponse({ status: 404, description: 'Ticket not found' })
-  @ApiResponse({ status: 403, description: 'Not your ticket' })
   @ApiResponse({
     status: 400,
     description:
-      'Ticket already used, already listed, or can only be resold once',
+      'Invalid ticket IDs, attempting to buy your own ticket, or other business rule violations',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Ticket(s) not found or not listed for resale',
   })
   @ApiResponse({
     status: 401,
     description: 'Unauthorized: JWT token missing or invalid',
   })
-  listForResale(
-    @Param('ticketId') ticketId: string,
-    @Body() dto: ListResaleDto,
-    @Req() req,
-  ) {
-    return this.ticketService.listForResale(ticketId, dto, req.user.sub);
+  buyResaleTickets(@Body() dto: BuyResaleDto, @Req() req) {
+    return this.ticketService.buyResaleTicket(dto, req.user.sub);
+  }
+
+  @Post('resale/list')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List multiple tickets for resale',
+    description:
+      'Lists one or more tickets for resale by the authenticated user.',
+  })
+  @ApiBody({ type: ListResaleDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Tickets listed for resale successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          resalePrice: { type: 'number' },
+          listedAt: { type: 'string', format: 'date-time' },
+          isListed: { type: 'boolean' },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'One or more tickets not found or not owned by user',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Tickets already used, already listed, or cannot be resold again',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  listForResale(@Body() dto: ListResaleDto, @Req() req) {
+    return this.ticketService.listForResale(dto, req.user.sub);
   }
 
   @Get('resell')
@@ -143,36 +181,6 @@ export class TicketController {
   })
   browseResale(@Query('eventId') eventId?: string) {
     return this.ticketService.getResaleTickets(eventId);
-  }
-
-  @Post('resale/:ticketId/buy')
-  @ApiOperation({
-    summary: 'Buy a resale ticket',
-    description:
-      'Purchases a ticket listed for resale by the authenticated user.',
-  })
-  @ApiParam({
-    name: 'ticketId',
-    description: 'UUID of the resale ticket',
-    type: String,
-    example: '789a123b-456c-78d9-e012-3456789f1234',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Resale ticket purchased successfully',
-    type: Object,
-  })
-  @ApiResponse({ status: 404, description: 'Ticket not found' })
-  @ApiResponse({
-    status: 400,
-    description: 'Ticket not for sale or cannot buy your own ticket',
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized: JWT token missing or invalid',
-  })
-  buyResale(@Param('ticketId') ticketId: string, @Req() req) {
-    return this.ticketService.buyResaleTicket(ticketId, req.user.sub);
   }
 
   @Get('my/resales')

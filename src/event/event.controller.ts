@@ -82,7 +82,7 @@ export class EventController {
 
   @Post()
   @HttpCode(201)
-  @Roles('ORGANIZER')
+  @Roles(Role.ORGANIZER)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
@@ -178,7 +178,7 @@ export class EventController {
 
   @Get('organizer/my')
   @HttpCode(200)
-  @Roles('ORGANIZER')
+  @Roles(Role.ORGANIZER)
   @ApiOperation({
     summary: 'Get organizer’s events',
     description: 'Retrieves all events created by the authenticated organizer.',
@@ -201,7 +201,7 @@ export class EventController {
   }
 
   @Patch(':id')
-  @Roles('ORGANIZER')
+  @Roles(Role.ORGANIZER)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
@@ -253,7 +253,7 @@ export class EventController {
   }
 
   @Patch(':id/toggle')
-  @Roles('ORGANIZER')
+  @Roles(Role.ORGANIZER)
   @ApiOperation({
     summary: 'Toggle event status',
     description:

@@ -31,8 +31,23 @@ export class PaymentService {
     return response?.data?.checkout_url ?? null;
   }
 
+  async initiateWithdrawal(data: any): Promise<any> {
+    const response = await this.httpService.axiosRef.post(
+      `${this.paymentBaseUrl}/api/v1/payout`,
+      data,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
+        },
+      },
+    );
+
+    return response?.data ?? null;
+  }
+
   async verifyTransaction(reference: string) {
     try {
+      // Step 1: Verify payment with third-party provider
       const { data } = await this.httpService.axiosRef.get(
         `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`,
         {
@@ -46,46 +61,83 @@ export class PaymentService {
         throw new BadRequestException('Transaction verification failed');
       }
 
+      // Step 2: Fetch transaction (with event + tickets)
       const transaction = await this.prisma.transaction.findUnique({
         where: { reference },
-        include: { event: true, ticket: true },
+        include: {
+          event: true,
+          tickets: {
+            include: { ticket: true },
+          },
+        },
       });
 
       if (!transaction) throw new NotFoundException('Transaction not found');
-      // if (transaction.status === 'SUCCESS')
-      //   throw new BadRequestException('Transaction already verified');
+      if (transaction.status === 'SUCCESS')
+        throw new BadRequestException('Transaction already verified');
 
-      // Mark transaction as successful
+      // Step 3: Mark transaction as successful
       await this.prisma.transaction.update({
         where: { reference },
         data: { status: 'SUCCESS' },
       });
 
-      // Primary ticket purchase flow
-      if (transaction.type === 'PRIMARY') {
-        await this.prisma.ticket.create({
-          data: {
-            userId: transaction.userId,
-            eventId: transaction.eventId,
-          },
-        });
+      // Step 4: Extract ticket IDs from relation
+      let ticketIds = transaction.tickets.map((tt) => tt.ticket.id);
 
+      // Step 5: Primary ticket purchase flow
+      if (transaction.type === 'PRIMARY') {
+        const ticketCount =
+          ticketIds.length ||
+          Math.floor(transaction.amount / transaction.event.price);
+
+        // Create and attach tickets if none already created
+        if (ticketIds.length === 0) {
+          const newTicketIds: string[] = [];
+          for (let i = 0; i < ticketCount; i++) {
+            const ticket = await this.prisma.ticket.create({
+              data: {
+                userId: transaction.userId,
+                eventId: transaction.eventId,
+              },
+            });
+            newTicketIds.push(ticket.id);
+          }
+
+          // Attach tickets to the transaction
+          await this.prisma.transaction.update({
+            where: { reference },
+            data: {
+              tickets: {
+                create: newTicketIds.map((id) => ({
+                  ticket: { connect: { id } },
+                })),
+              },
+            },
+          });
+
+          ticketIds = newTicketIds;
+        }
+
+        // Update event minted count
         await this.prisma.event.update({
           where: { id: transaction.eventId },
-          data: { minted: { increment: 1 } },
+          data: { minted: { increment: ticketIds.length } },
         });
 
+        // Calculate platform cut and organizer proceeds
         const platformCut = Math.floor(
           (transaction.amount * transaction.event.primaryFeeBps) / 10000,
-        ); // 5%
-        const organizerProceed = Math.floor(transaction.amount - platformCut);
+        );
+        const organizerProceeds = transaction.amount - platformCut;
 
+        // Pay organizer
         await this.prisma.wallet.update({
           where: { userId: transaction.event.organizerId },
-          data: { balance: { increment: organizerProceed } },
+          data: { balance: { increment: organizerProceeds } },
         });
 
-        // Pay platform cut to admin account (kareola960@gmail.com)
+        // Pay platform admin
         const platformAdmin = await this.prisma.user.findUnique({
           where: { email: 'kareola960@gmail.com' },
         });
@@ -98,69 +150,81 @@ export class PaymentService {
         }
       }
 
-      // Resale purchase flow
+      // Step 6: Resale purchase flow
       else if (transaction.type === 'RESALE') {
-        const ticket = await this.prisma.ticket.findUnique({
-          where: { id: transaction.ticketId! },
+        if (!ticketIds.length)
+          throw new BadRequestException(
+            'No ticket IDs found for resale transaction',
+          );
+
+        const tickets = await this.prisma.ticket.findMany({
+          where: { id: { in: ticketIds } },
+          include: { event: true },
         });
 
-        if (!ticket) throw new NotFoundException('Ticket not found');
+        if (tickets.length !== ticketIds.length) {
+          throw new NotFoundException('One or more tickets not found');
+        }
 
-        const event = await this.prisma.event.findUnique({
-          where: { id: ticket.eventId },
-        });
+        const event = tickets[0].event;
         if (!event) throw new NotFoundException('Event not found');
 
-        const resalePrice = ticket.resalePrice!;
-        const platformCut = Math.floor(
-          (resalePrice * event.resaleFeeBps) / 10000,
-        ); // 5%
-        const organizerRoyalty = Math.floor(
-          (resalePrice * event.royaltyFeeBps) / 10000,
-        ); // 5%
-        const sellerProceeds = resalePrice - (platformCut + organizerRoyalty);
+        // Process each resale ticket
+        for (const ticket of tickets) {
+          const resalePrice = ticket.resalePrice!;
+          const platformCut = Math.floor(
+            (resalePrice * event.resaleFeeBps) / 10000,
+          );
+          const organizerRoyalty = Math.floor(
+            (resalePrice * event.royaltyFeeBps) / 10000,
+          );
+          const sellerProceeds = resalePrice - (platformCut + organizerRoyalty);
 
-        // Transfer ticket
-        await this.prisma.ticket.update({
-          where: { id: transaction.ticketId! },
-          data: {
-            userId: transaction.userId,
-            isListed: false,
-            resalePrice: null,
-            resaleCount: { increment: 1 },
-            resaleCommission: platformCut + organizerRoyalty,
-            soldTo: transaction.userId,
-          },
-        });
-
-        // Pay original seller
-        await this.prisma.wallet.update({
-          where: { userId: ticket.userId },
-          data: { balance: { increment: sellerProceeds } },
-        });
-
-        // Pay organizer royalty
-        await this.prisma.wallet.update({
-          where: { userId: event.organizerId },
-          data: { balance: { increment: organizerRoyalty } },
-        });
-
-        // Pay platform cut to admin account (kareola960@gmail.com)
-        const platformAdmin = await this.prisma.user.findUnique({
-          where: { email: 'kareola960@gmail.com' },
-        });
-
-        if (platformAdmin) {
-          await this.prisma.wallet.update({
-            where: { userId: platformAdmin.id },
-            data: { balance: { increment: platformCut } },
+          // Transfer ticket to buyer
+          await this.prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              userId: transaction.userId,
+              isListed: false,
+              resalePrice: null,
+              resaleCount: { increment: 1 },
+              resaleCommission: platformCut + organizerRoyalty,
+              soldTo: transaction.userId,
+            },
           });
+
+          // Pay seller
+          await this.prisma.wallet.update({
+            where: { userId: ticket.userId },
+            data: { balance: { increment: sellerProceeds } },
+          });
+
+          // Pay organizer royalty
+          await this.prisma.wallet.update({
+            where: { userId: event.organizerId },
+            data: { balance: { increment: organizerRoyalty } },
+          });
+
+          // Pay platform cut
+          const platformAdmin = await this.prisma.user.findUnique({
+            where: { email: 'kareola960@gmail.com' },
+          });
+
+          if (platformAdmin) {
+            await this.prisma.wallet.update({
+              where: { userId: platformAdmin.id },
+              data: { balance: { increment: platformCut } },
+            });
+          }
         }
       }
 
-      return { message: 'Transaction verified and processed successfully' };
+      return {
+        message: 'Transaction verified and processed successfully',
+        ticketIds,
+      };
     } catch (error) {
-      console.error(error);
+      console.error('[Verify Transaction Error]', error);
       throw new BadRequestException(
         error?.response?.data?.message || 'Could not verify transaction',
       );
