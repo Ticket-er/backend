@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InitiateDto } from './dto/initiate.dto';
@@ -11,6 +12,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class PaymentService {
   private readonly paymentBaseUrl = process.env.PAYMENT_GATEWAY_URL;
   private readonly paymentSecretKey = process.env.PAYMENT_GATEWAY_TEST_SECRET;
+  private logger = new Logger(PaymentService.name);
 
   constructor(
     private httpService: HttpService,
@@ -18,17 +20,29 @@ export class PaymentService {
   ) {}
 
   async initiatePayment(data: InitiateDto): Promise<string> {
-    const response = await this.httpService.axiosRef.post(
-      `${this.paymentBaseUrl}/api/v1/initiate`,
-      data,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
+    try {
+      const response = await this.httpService.axiosRef.post(
+        `${this.paymentBaseUrl}/api/v1/initiate`,
+        data,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
+          },
         },
-      },
-    );
+      );
 
-    return response?.data?.checkout_url ?? null;
+      return response?.data?.checkout_url ?? null;
+    } catch (error) {
+      console.error('[PaymentService] Initiate Payment Error:', {
+        message: error?.message,
+        responseData: error?.response?.data,
+        status: error?.response?.status,
+      });
+
+      throw new Error(
+        error?.response?.data?.message || 'Failed to initiate payment',
+      );
+    }
   }
 
   async initiateWithdrawal(data: any): Promise<any> {
@@ -47,6 +61,7 @@ export class PaymentService {
 
   async verifyTransaction(reference: string) {
     try {
+      this.logger.log(`Verifying transaction with reference: ${reference}`);
       // Step 1: Verify payment with third-party provider
       const { data } = await this.httpService.axiosRef.get(
         `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`,
@@ -62,6 +77,7 @@ export class PaymentService {
       }
 
       // Step 2: Fetch transaction (with event + tickets)
+      this.logger.log(`Fetching transaction with reference: ${reference}`);
       const transaction = await this.prisma.transaction.findUnique({
         where: { reference },
         include: {
@@ -77,6 +93,7 @@ export class PaymentService {
         throw new BadRequestException('Transaction already verified');
 
       // Step 3: Mark transaction as successful
+      this.logger.log(`Marking transaction as successful: ${reference}`);
       await this.prisma.transaction.update({
         where: { reference },
         data: { status: 'SUCCESS' },
@@ -143,6 +160,16 @@ export class PaymentService {
         const organizerProceeds = transaction.amount - platformCut;
 
         // Pay organizer
+        let organizerWallet = await this.prisma.wallet.findUnique({
+          where: { userId: transaction.event.organizerId },
+        });
+
+        if (!organizerWallet) {
+          organizerWallet = await this.prisma.wallet.create({
+            data: { userId: transaction.event.organizerId, balance: 0 },
+          });
+        }
+
         await this.prisma.wallet.update({
           where: { userId: transaction.event.organizerId },
           data: { balance: { increment: organizerProceeds } },
@@ -154,6 +181,16 @@ export class PaymentService {
         });
 
         if (platformAdmin) {
+          let adminWallet = await this.prisma.wallet.findUnique({
+            where: { userId: platformAdmin.id },
+          });
+
+          if (!adminWallet) {
+            adminWallet = await this.prisma.wallet.create({
+              data: { userId: platformAdmin.id, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: platformAdmin.id },
             data: { balance: { increment: platformCut } },
@@ -205,12 +242,32 @@ export class PaymentService {
           });
 
           // Pay seller
+          let sellerWallet = await this.prisma.wallet.findUnique({
+            where: { userId: event.organizerId },
+          });
+
+          if (!sellerWallet) {
+            sellerWallet = await this.prisma.wallet.create({
+              data: { userId: event.organizerId, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: ticket.userId },
             data: { balance: { increment: sellerProceeds } },
           });
 
           // Pay organizer royalty
+          let organizerWallet = await this.prisma.wallet.findUnique({
+            where: { userId: event.organizerId },
+          });
+
+          if (!organizerWallet) {
+            organizerWallet = await this.prisma.wallet.create({
+              data: { userId: event.organizerId, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: event.organizerId },
             data: { balance: { increment: organizerRoyalty } },
@@ -222,6 +279,16 @@ export class PaymentService {
           });
 
           if (platformAdmin) {
+            let adminWallet = await this.prisma.wallet.findUnique({
+              where: { userId: platformAdmin.id },
+            });
+
+            if (!adminWallet) {
+              adminWallet = await this.prisma.wallet.create({
+                data: { userId: platformAdmin.id, balance: 0 },
+              });
+            }
+
             await this.prisma.wallet.update({
               where: { userId: platformAdmin.id },
               data: { balance: { increment: platformCut } },
@@ -235,9 +302,16 @@ export class PaymentService {
         ticketIds,
       };
     } catch (error) {
-      console.error('[Verify Transaction Error]', error);
+      console.error('[Verify Transaction Error]', {
+        message: error.message,
+        response: error.response?.data,
+        stack: error.stack,
+      });
+
       throw new BadRequestException(
-        error?.response?.data?.message || 'Could not verify transaction',
+        error?.response?.data?.message ||
+          error?.message ||
+          'Could not verify transaction',
       );
     }
   }

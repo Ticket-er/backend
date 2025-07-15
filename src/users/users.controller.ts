@@ -6,6 +6,7 @@ import {
   UploadedFile,
   UseInterceptors,
   Req,
+  Patch,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserService } from './users.service';
@@ -80,5 +81,12 @@ export class UserController {
     @Req() req,
   ) {
     return this.userService.updateUser(req.user.sub, dto, file);
+  }
+
+  @Patch('become-organizer')
+  @UseGuards(JwtGuard)
+  async becomeOrganizer(@Req() req) {
+    const userId = req.user.sub;
+    return this.userService.becomeOrganizer(userId);
   }
 }

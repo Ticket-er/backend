@@ -1,6 +1,8 @@
 import {
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +12,7 @@ import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Injectable()
 export class EventService {
+  private readonly logger = new Logger(EventService.name);
   constructor(
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
@@ -20,29 +23,54 @@ export class EventService {
     userId: string,
     file?: Express.Multer.File,
   ) {
+    this.logger.log(`Starting event creation for user: ${userId}`);
+    this.logger.debug(`DTO received: ${JSON.stringify(dto, null, 2)}`);
+    if (file) {
+      this.logger.log(`File received: ${file.originalname}`);
+    } else {
+      this.logger.warn('No file provided');
+    }
+
     let bannerUrl: string | undefined;
 
+    // Step 1: Handle Image Upload
     if (file) {
-      const upload = await this.cloudinary.uploadImage(
-        file,
-        'ticket-er/events',
-      );
-      bannerUrl = upload;
+      try {
+        const upload = await this.cloudinary.uploadImage(
+          file,
+          'ticket-er/events',
+        );
+        bannerUrl = upload;
+        this.logger.log(`Image uploaded successfully: ${bannerUrl}`);
+      } catch (err) {
+        this.logger.error(`Image upload failed: ${err.message}`);
+        throw new InternalServerErrorException('Failed to upload event banner');
+      }
     }
-    const price = Number(dto.price);
-    const maxTickets = Number(dto.maxTickets);
 
-    return this.prisma.event.create({
-      data: {
-        name: dto.name,
-        price,
-        maxTickets,
-        organizerId: userId,
-        date: dto.date,
-        isActive: true,
-        bannerUrl,
-      },
-    });
+    // Step 2: Save Event to DB
+    try {
+      const price = Number(dto.price);
+      const maxTickets = Number(dto.maxTickets);
+
+      const event = await this.prisma.event.create({
+        data: {
+          name: dto.name,
+          price,
+          maxTickets,
+          organizerId: userId,
+          date: dto.date,
+          isActive: true,
+          bannerUrl,
+        },
+      });
+
+      this.logger.log(`Event created with ID: ${event.id}`);
+      return event;
+    } catch (err) {
+      this.logger.error(`Error creating event: ${err.message}`, err.stack);
+      throw new InternalServerErrorException('Failed to create event');
+    }
   }
 
   async updateEvent(

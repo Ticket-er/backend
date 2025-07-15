@@ -128,4 +128,7 @@ export class WalletService {
       payout: payoutResult,
     };
   }
+
+  //GET TRANSACTIONS
+  //PAY FOR TICKET WITH WALLET IN FUTURE VERSIONS
 }
