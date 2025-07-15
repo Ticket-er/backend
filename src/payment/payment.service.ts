@@ -89,17 +89,22 @@ export class PaymentService {
       if (transaction.type === 'PRIMARY') {
         const ticketCount =
           ticketIds.length ||
-          Math.floor(transaction.amount / transaction.event.price);
+          (transaction?.event?.price
+            ? Math.floor(transaction.amount / transaction.event.price)
+            : 0);
 
         // Create and attach tickets if none already created
         if (ticketIds.length === 0) {
           const newTicketIds: string[] = [];
           for (let i = 0; i < ticketCount; i++) {
+            const ticketData: any = {
+              userId: transaction.userId,
+            };
+            if (transaction.eventId) {
+              ticketData.eventId = transaction.eventId;
+            }
             const ticket = await this.prisma.ticket.create({
-              data: {
-                userId: transaction.userId,
-                eventId: transaction.eventId,
-              },
+              data: ticketData,
             });
             newTicketIds.push(ticket.id);
           }
@@ -120,12 +125,18 @@ export class PaymentService {
         }
 
         // Update event minted count
+        if (!transaction.eventId) {
+          throw new NotFoundException('Event ID not found for transaction');
+        }
         await this.prisma.event.update({
           where: { id: transaction.eventId },
           data: { minted: { increment: ticketIds.length } },
         });
 
         // Calculate platform cut and organizer proceeds
+        if (!transaction.event) {
+          throw new NotFoundException('Event not found for transaction');
+        }
         const platformCut = Math.floor(
           (transaction.amount * transaction.event.primaryFeeBps) / 10000,
         );

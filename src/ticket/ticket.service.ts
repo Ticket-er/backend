@@ -8,6 +8,7 @@ import { BuyNewDto } from './dto/buy-new.dto';
 import { ListResaleDto } from './dto/list-resale.dto';
 import { PaymentService } from 'src/payment/payment.service';
 import { BuyResaleDto } from './dto/buy-resale.dto';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class TicketService {
@@ -15,6 +16,56 @@ export class TicketService {
     private prisma: PrismaService,
     private paymentService: PaymentService,
   ) {}
+
+  async verifyTicket(payload: {
+    ticketId?: string;
+    code?: string;
+    eventId: string;
+    userId: string;
+  }) {
+    const { ticketId, code, eventId, userId } = payload;
+
+    if (!ticketId && !code) {
+      throw new BadRequestException('Either ticketId or code is required');
+    }
+
+    // Find ticket by ID or code
+    const ticket = await this.prisma.ticket.findFirst({
+      where: {
+        eventId,
+        ...(ticketId ? { id: ticketId } : { code }),
+      },
+      include: { event: true },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const isOrganizer = ticket.event.organizerId === userId;
+
+    let updated = false;
+
+    // If organizer, mark as used
+    if (isOrganizer && !ticket.isUsed) {
+      await this.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { isUsed: true },
+      });
+      updated = true;
+    }
+
+    return {
+      ticketId: ticket.id,
+      code: ticket.code,
+      eventId: ticket.eventId,
+      status: ticket.isUsed ? 'USED' : 'VALID',
+      markedUsed: updated,
+      message: ticket.isUsed
+        ? 'Ticket has already been used'
+        : isOrganizer
+          ? 'Ticket marked as used'
+          : 'Ticket is valid',
+    };
+  }
 
   async buyNewTicket(dto: BuyNewDto, userId: string) {
     // Step 1: Validate event
@@ -39,19 +90,28 @@ export class TicketService {
     // Step 4: Generate unique reference
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // Step 5: Create tickets and store their IDs
+    // Step 5: Create tickets with codes
     const ticketIds: string[] = [];
-    for (let i = 0; i < dto.quantity; i++) {
-      const ticket = await this.prisma.ticket.create({
-        data: {
-          userId,
-          eventId: dto.eventId,
-        },
-      });
-      ticketIds.push(ticket.id);
+    const createdTickets: any[] = [];
+
+    try {
+      for (let i = 0; i < dto.quantity; i++) {
+        const code = `TCK-${randomBytes(3).toString('hex').toUpperCase()}`;
+        const ticket = await this.prisma.ticket.create({
+          data: {
+            userId,
+            eventId: dto.eventId,
+            code,
+          },
+        });
+        ticketIds.push(ticket.id);
+        createdTickets.push(ticket);
+      }
+    } catch {
+      throw new BadRequestException('Error while creating tickets');
     }
 
-    // Step 6: Create pending transaction with ticket IDs
+    // Step 6: Create transaction
     try {
       await this.prisma.transaction.create({
         data: {
@@ -62,16 +122,14 @@ export class TicketService {
           status: 'PENDING',
           amount: event.price * dto.quantity,
           tickets: {
-            create: ticketIds.map((ticketId) => ({
-              ticket: {
-                connect: { id: ticketId },
-              },
+            create: ticketIds.map((id) => ({
+              ticketId: id,
             })),
           },
         },
       });
     } catch {
-      // Rollback ticket creation if transaction fails
+      // Rollback tickets
       await this.prisma.ticket.deleteMany({
         where: { id: { in: ticketIds } },
       });
@@ -81,36 +139,33 @@ export class TicketService {
     // Step 7: Attempt to initiate payment
     let checkoutUrl: string | null = null;
     try {
-      const url = await this.paymentService.initiatePayment({
+      checkoutUrl = await this.paymentService.initiatePayment({
         customer: { email: user.email, name: user.name },
         amount: event.price * dto.quantity,
         currency: 'NGN',
         reference,
         processor: 'kora',
         narration: `Tickets for ${event.name}`,
-        notification_url: `${process.env.NOTIFICATION_URL}`,
         metadata: { ticketIds },
       });
 
-      checkoutUrl = url;
-
-      if (!checkoutUrl) {
-        throw new Error('Missing checkout URL from payment provider');
-      }
+      if (!checkoutUrl) throw new Error('No checkout URL');
     } catch {
       await this.prisma.transaction.updateMany({
         where: { reference },
         data: { status: 'FAILED' },
       });
+
       await this.prisma.ticket.deleteMany({
         where: { id: { in: ticketIds } },
       });
+
       throw new BadRequestException(
         'Payment initialization failed. Please try again.',
       );
     }
 
-    // Step 8: Return successful checkout URL
+    // Step 8: Return payment URL
     return { checkoutUrl };
   }
 

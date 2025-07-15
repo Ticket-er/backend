@@ -30,6 +30,31 @@ import { BuyResaleDto } from './dto/buy-resale.dto';
 export class TicketController {
   constructor(private ticketService: TicketService) {}
 
+  @Post('verify')
+  @ApiOperation({
+    summary: 'Verify a ticket (scan or code input)',
+    description:
+      'Anyone can check if a ticket is valid or used. Only the organizer can mark it as used.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        ticketId: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+        code: { type: 'string', example: 'TCK-9X8B7Z' },
+        eventId: { type: 'string', example: 'clx81r0jk0000s1aofh4c4z3a' },
+      },
+      required: ['eventId'],
+    },
+  })
+  @UseGuards(JwtGuard) // still protected
+  verifyTicket(@Body() body, @Req() req) {
+    return this.ticketService.verifyTicket({
+      ...body,
+      userId: req.user.sub,
+    });
+  }
+
   @Post(':eventId/buy')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
