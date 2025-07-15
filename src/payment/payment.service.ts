@@ -160,6 +160,16 @@ export class PaymentService {
         const organizerProceeds = transaction.amount - platformCut;
 
         // Pay organizer
+        let organizerWallet = await this.prisma.wallet.findUnique({
+          where: { userId: transaction.event.organizerId },
+        });
+
+        if (!organizerWallet) {
+          organizerWallet = await this.prisma.wallet.create({
+            data: { userId: transaction.event.organizerId, balance: 0 },
+          });
+        }
+
         await this.prisma.wallet.update({
           where: { userId: transaction.event.organizerId },
           data: { balance: { increment: organizerProceeds } },
@@ -171,6 +181,16 @@ export class PaymentService {
         });
 
         if (platformAdmin) {
+          let adminWallet = await this.prisma.wallet.findUnique({
+            where: { userId: platformAdmin.id },
+          });
+
+          if (!adminWallet) {
+            adminWallet = await this.prisma.wallet.create({
+              data: { userId: platformAdmin.id, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: platformAdmin.id },
             data: { balance: { increment: platformCut } },
@@ -252,9 +272,16 @@ export class PaymentService {
         ticketIds,
       };
     } catch (error) {
-      console.error('[Verify Transaction Error]', error);
+      console.error('[Verify Transaction Error]', {
+        message: error.message,
+        response: error.response?.data,
+        stack: error.stack,
+      });
+
       throw new BadRequestException(
-        error?.response?.data?.message || 'Could not verify transaction',
+        error?.response?.data?.message ||
+          error?.message ||
+          'Could not verify transaction',
       );
     }
   }

@@ -17,7 +17,7 @@ import { Role } from 'generated/prisma';
 @ApiBearerAuth()
 @UseGuards(JwtGuard)
 @Roles(Role.ORGANIZER)
-@Controller('wallet')
+@Controller('v1/wallet')
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
 
