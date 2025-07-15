@@ -51,4 +51,29 @@ export class UserService {
 
     return { message: 'Profile updated successfully', user: updatedUser };
   }
+
+  async becomeOrganizer(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === 'ORGANIZER') {
+      throw new BadRequestException('User is already an organizer');
+    }
+
+    // Update role
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: 'ORGANIZER' },
+    });
+
+    // Ensure wallet exists
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      await this.prisma.wallet.create({
+        data: { userId, balance: 0 },
+      });
+    }
+
+    return { message: 'You are now an organizer!' };
+  }
 }

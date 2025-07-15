@@ -242,12 +242,32 @@ export class PaymentService {
           });
 
           // Pay seller
+          let sellerWallet = await this.prisma.wallet.findUnique({
+            where: { userId: event.organizerId },
+          });
+
+          if (!sellerWallet) {
+            sellerWallet = await this.prisma.wallet.create({
+              data: { userId: event.organizerId, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: ticket.userId },
             data: { balance: { increment: sellerProceeds } },
           });
 
           // Pay organizer royalty
+          let organizerWallet = await this.prisma.wallet.findUnique({
+            where: { userId: event.organizerId },
+          });
+
+          if (!organizerWallet) {
+            organizerWallet = await this.prisma.wallet.create({
+              data: { userId: event.organizerId, balance: 0 },
+            });
+          }
+
           await this.prisma.wallet.update({
             where: { userId: event.organizerId },
             data: { balance: { increment: organizerRoyalty } },
@@ -259,6 +279,16 @@ export class PaymentService {
           });
 
           if (platformAdmin) {
+            let adminWallet = await this.prisma.wallet.findUnique({
+              where: { userId: platformAdmin.id },
+            });
+
+            if (!adminWallet) {
+              adminWallet = await this.prisma.wallet.create({
+                data: { userId: platformAdmin.id, balance: 0 },
+              });
+            }
+
             await this.prisma.wallet.update({
               where: { userId: platformAdmin.id },
               data: { balance: { increment: platformCut } },

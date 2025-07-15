@@ -10,13 +10,10 @@ import {
 import { WalletService } from './wallet.service';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from 'src/auth/guards/jwt.guard';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { Role } from 'generated/prisma';
 
 @ApiTags('Wallet')
 @ApiBearerAuth()
 @UseGuards(JwtGuard)
-@Roles(Role.ORGANIZER)
 @Controller('v1/wallet')
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}

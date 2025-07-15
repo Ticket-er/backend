@@ -130,5 +130,5 @@ export class WalletService {
   }
 
   //GET TRANSACTIONS
-  //PAY FOR TICKET
+  //PAY FOR TICKET WITH WALLET IN FUTURE VERSIONS
 }
