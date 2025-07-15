@@ -64,10 +64,10 @@ export class AuthService {
     if (!isMatch) throw new BadRequestException('Invalid password');
     if (!user.isVerified) throw new BadRequestException('Email not verified');
 
-    const payload = { sub: user.id, email: user.email };
+    const payload = { sub: user.id, email: user.email, role: user.role };
     const token = await this.jwtService.signAsync(payload, {
       secret: process.env.JWT_SECRET,
-      expiresIn: '1d',
+      expiresIn: '2 days',
     });
 
     return { access_token: token };

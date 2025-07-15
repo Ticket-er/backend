@@ -14,7 +14,7 @@ import { AuthController } from './auth.controller';
     MailModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'defaultSecret',
-      signOptions: { expiresIn: '1d' },
+      signOptions: { expiresIn: '2 days' },
     }),
   ],
   providers: [AuthService, PrismaService, JwtService, MailService, JwtStrategy],

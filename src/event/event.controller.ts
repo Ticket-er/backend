@@ -80,7 +80,7 @@ export class EventController {
     return this.eventService.getAllEvents();
   }
 
-  @Post()
+  @Post('create')
   @HttpCode(201)
   @Roles(Role.ORGANIZER)
   @UseInterceptors(FileInterceptor('file'))

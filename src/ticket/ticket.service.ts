@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -12,6 +13,8 @@ import { randomBytes } from 'crypto';
 
 @Injectable()
 export class TicketService {
+  private logger = new Logger(TicketService.name);
+
   constructor(
     private prisma: PrismaService,
     private paymentService: PaymentService,
@@ -68,33 +71,45 @@ export class TicketService {
   }
 
   async buyNewTicket(dto: BuyNewDto, userId: string) {
+    this.logger.log(
+      `Starting ticket purchase for event ${dto.eventId} by user ${userId}`,
+    );
+
     // Step 1: Validate event
     const event = await this.prisma.event.findUnique({
       where: { id: dto.eventId },
     });
-    if (!event || !event.isActive)
+    if (!event || !event.isActive) {
+      this.logger.warn(`Event ${dto.eventId} not found or inactive`);
       throw new NotFoundException('Event not available');
-    if (event.date < new Date())
+    }
+    if (event.date < new Date()) {
+      this.logger.warn(`Event ${dto.eventId} already passed`);
       throw new BadRequestException('Event already passed');
+    }
 
     // Step 2: Validate supply
-    if (event.minted + dto.quantity > event.maxTickets)
+    if (event.minted + dto.quantity > event.maxTickets) {
+      this.logger.warn(`Not enough tickets for event ${dto.eventId}`);
       throw new BadRequestException('Not enough tickets available');
+    }
 
     // Step 3: Validate user
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) {
+      this.logger.error(`User ${userId} not found`);
+      throw new NotFoundException('User not found');
+    }
 
     // Step 4: Generate unique reference
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // Step 5: Create tickets with codes
+    // Step 5: Create tickets
     const ticketIds: string[] = [];
-    const createdTickets: any[] = [];
-
     try {
+      this.logger.log(`Creating ${dto.quantity} ticket(s) for user ${userId}`);
       for (let i = 0; i < dto.quantity; i++) {
         const code = `TCK-${randomBytes(3).toString('hex').toUpperCase()}`;
         const ticket = await this.prisma.ticket.create({
@@ -105,14 +120,18 @@ export class TicketService {
           },
         });
         ticketIds.push(ticket.id);
-        createdTickets.push(ticket);
       }
-    } catch {
+    } catch (err) {
+      this.logger.error(
+        `Ticket creation failed for event ${dto.eventId}`,
+        err.stack,
+      );
       throw new BadRequestException('Error while creating tickets');
     }
 
     // Step 6: Create transaction
     try {
+      this.logger.log(`Creating transaction for reference ${reference}`);
       await this.prisma.transaction.create({
         data: {
           reference,
@@ -128,7 +147,11 @@ export class TicketService {
           },
         },
       });
-    } catch {
+    } catch (err) {
+      this.logger.error(
+        `Transaction creation failed for ref ${reference}`,
+        err.stack,
+      );
       // Rollback tickets
       await this.prisma.ticket.deleteMany({
         where: { id: { in: ticketIds } },
@@ -136,9 +159,11 @@ export class TicketService {
       throw new BadRequestException('Failed to create transaction');
     }
 
-    // Step 7: Attempt to initiate payment
+    // Step 7: Initiate payment
     let checkoutUrl: string | null = null;
     try {
+      this.logger.log(`Initiating payment for transaction ref ${reference}`);
+
       checkoutUrl = await this.paymentService.initiatePayment({
         customer: { email: user.email, name: user.name },
         amount: event.price * dto.quantity,
@@ -146,16 +171,33 @@ export class TicketService {
         reference,
         processor: 'kora',
         narration: `Tickets for ${event.name}`,
+        notification_url: `${process.env.NOTIFICATION_URL}`,
         metadata: { ticketIds },
       });
 
-      if (!checkoutUrl) throw new Error('No checkout URL');
-    } catch {
+      if (!checkoutUrl) {
+        throw new Error('No checkout URL returned from payment gateway');
+      }
+
+      this.logger.log(`Payment initiated: ${checkoutUrl}`);
+    } catch (err) {
+      this.logger.error(
+        `Payment initiation failed for ref ${reference}`,
+        err.stack,
+      );
+
+      // Mark transaction as failed
       await this.prisma.transaction.updateMany({
         where: { reference },
         data: { status: 'FAILED' },
       });
 
+      // Delete ticket associations
+      await this.prisma.transactionTicket.deleteMany({
+        where: { ticketId: { in: ticketIds } },
+      });
+
+      // Delete the tickets themselves
       await this.prisma.ticket.deleteMany({
         where: { id: { in: ticketIds } },
       });
@@ -366,9 +408,22 @@ export class TicketService {
 
   async getMyTickets(userId: string) {
     return this.prisma.ticket.findMany({
-      where: { userId },
-      include: { event: true },
-      orderBy: { createdAt: 'desc' },
+      where: {
+        userId,
+        TransactionTicket: {
+          some: {
+            transaction: {
+              status: 'SUCCESS',
+            },
+          },
+        },
+      },
+      include: {
+        event: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
   }
 }

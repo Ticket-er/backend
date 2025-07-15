@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InitiateDto } from './dto/initiate.dto';
@@ -11,6 +12,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class PaymentService {
   private readonly paymentBaseUrl = process.env.PAYMENT_GATEWAY_URL;
   private readonly paymentSecretKey = process.env.PAYMENT_GATEWAY_TEST_SECRET;
+  private logger = new Logger(PaymentService.name);
 
   constructor(
     private httpService: HttpService,
@@ -18,17 +20,29 @@ export class PaymentService {
   ) {}
 
   async initiatePayment(data: InitiateDto): Promise<string> {
-    const response = await this.httpService.axiosRef.post(
-      `${this.paymentBaseUrl}/api/v1/initiate`,
-      data,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
+    try {
+      const response = await this.httpService.axiosRef.post(
+        `${this.paymentBaseUrl}/api/v1/initiate`,
+        data,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PAYMENT_GATEWAY_TEST_SECRET}`,
+          },
         },
-      },
-    );
+      );
 
-    return response?.data?.checkout_url ?? null;
+      return response?.data?.checkout_url ?? null;
+    } catch (error) {
+      console.error('[PaymentService] Initiate Payment Error:', {
+        message: error?.message,
+        responseData: error?.response?.data,
+        status: error?.response?.status,
+      });
+
+      throw new Error(
+        error?.response?.data?.message || 'Failed to initiate payment',
+      );
+    }
   }
 
   async initiateWithdrawal(data: any): Promise<any> {
@@ -47,6 +61,7 @@ export class PaymentService {
 
   async verifyTransaction(reference: string) {
     try {
+      this.logger.log(`Verifying transaction with reference: ${reference}`);
       // Step 1: Verify payment with third-party provider
       const { data } = await this.httpService.axiosRef.get(
         `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`,
@@ -62,6 +77,7 @@ export class PaymentService {
       }
 
       // Step 2: Fetch transaction (with event + tickets)
+      this.logger.log(`Fetching transaction with reference: ${reference}`);
       const transaction = await this.prisma.transaction.findUnique({
         where: { reference },
         include: {
@@ -77,6 +93,7 @@ export class PaymentService {
         throw new BadRequestException('Transaction already verified');
 
       // Step 3: Mark transaction as successful
+      this.logger.log(`Marking transaction as successful: ${reference}`);
       await this.prisma.transaction.update({
         where: { reference },
         data: { status: 'SUCCESS' },
