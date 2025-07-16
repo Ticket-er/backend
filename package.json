@@ -19,6 +19,9 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
+  "_moduleAliases": {
+    "@prisma": "generated/prisma"
+  },
   "dependencies": {
     "@nestjs/axios": "^4.0.0",
     "@nestjs/common": "^11.0.1",
@@ -36,6 +39,7 @@
     "class-validator": "^0.14.2",
     "cloudinary": "^2.7.0",
     "ethers": "^6.14.4",
+    "module-alias": "^2.2.3",
     "multer": "^2.0.1",
     "nodemailer": "^7.0.4",
     "passport": "^0.7.0",
