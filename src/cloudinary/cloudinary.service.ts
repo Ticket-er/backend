@@ -1,7 +1,5 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { v2 as cloudinary } from 'cloudinary';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import * as multer from 'multer';
 import { Readable } from 'stream';
 
 @Injectable()
@@ -12,19 +10,6 @@ export class CloudinaryService {
       api_key: process.env.CLOUDINARY_API_KEY,
       api_secret: process.env.CLOUDINARY_API_SECRET,
     });
-  }
-
-  getMulterUploader(folder: string) {
-    const storage = new CloudinaryStorage({
-      cloudinary,
-      params: () => ({
-        folder: folder,
-        allowed_formats: ['jpg', 'jpeg', 'png'],
-        transformation: [{ width: 500, height: 500, crop: 'limit' }],
-      }),
-    });
-
-    return multer({ storage });
   }
 
   async uploadImage(
