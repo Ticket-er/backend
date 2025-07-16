@@ -12,6 +12,5 @@
       "dest": "src/main.ts",
       "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"]
     }
-  ],
-  "buildCommand": "npm install --legacy-peer-deps && npx prisma generate && npm run build"
+  ]
 }
