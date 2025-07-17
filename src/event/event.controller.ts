@@ -35,7 +35,6 @@ import {
 
 @ApiTags('Events')
 @Controller('v1/events')
-@UseGuards(JwtGuard, RolesGuard)
 @ApiBearerAuth()
 export class EventController {
   constructor(private eventService: EventService) {}
@@ -80,6 +79,7 @@ export class EventController {
     return this.eventService.getAllEvents();
   }
 
+  @UseGuards(JwtGuard, RolesGuard)
   @Post('create')
   @HttpCode(201)
   @Roles(Role.ORGANIZER)
@@ -143,6 +143,7 @@ export class EventController {
     return this.eventService.createEvent(dto, user.sub, file);
   }
 
+  @UseGuards(JwtGuard, RolesGuard)
   @Get('user/my')
   @HttpCode(200)
   @ApiOperation({
@@ -193,6 +194,7 @@ export class EventController {
     return this.eventService.getPastEvents();
   }
 
+  @UseGuards(JwtGuard, RolesGuard)
   @Get('organizer/my')
   @HttpCode(200)
   @Roles(Role.ORGANIZER)
@@ -217,6 +219,7 @@ export class EventController {
     return this.eventService.getOrganizerEvents(req.user.sub);
   }
 
+  @UseGuards(JwtGuard, RolesGuard)
   @Patch(':id')
   @Roles(Role.ORGANIZER)
   @UseInterceptors(FileInterceptor('file'))
@@ -278,6 +281,7 @@ export class EventController {
     return this.eventService.updateEvent(id, dto, req.user.sub, file);
   }
 
+  @UseGuards(JwtGuard, RolesGuard)
   @Patch(':id/toggle')
   @Roles(Role.ORGANIZER)
   @ApiOperation({
