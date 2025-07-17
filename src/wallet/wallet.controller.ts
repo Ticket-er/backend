@@ -24,6 +24,12 @@ export class WalletController {
     return this.walletService.checkBalance(req.user.sub);
   }
 
+  @Get('transactions')
+  @ApiOperation({ summary: 'Get transaction history of authenticated user' })
+  async getTransactionHistory(@Req() req) {
+    return this.walletService.getTransactions(req.user.sub);
+  }
+
   @Post('fund')
   @ApiOperation({
     summary: 'Add funds to wallet',

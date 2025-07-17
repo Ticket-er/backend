@@ -97,6 +97,11 @@ export class EventController {
       properties: {
         name: { type: 'string', example: 'Music Festival' },
         price: { type: 'number', example: 50.0 },
+        description: {
+          type: 'string',
+          example:
+            'A music festival hosted by Davido and Rema. You have to be there',
+        },
         maxTickets: { type: 'number', example: 100 },
         date: {
           type: 'string',
@@ -105,7 +110,14 @@ export class EventController {
         },
         file: { type: 'string', format: 'binary' },
       },
-      required: ['name', 'metadataURI', 'price', 'maxTickets', 'date'],
+      required: [
+        'name',
+        'metadataURI',
+        'price',
+        'maxTickets',
+        'date',
+        'description',
+      ],
     },
   })
   @ApiResponse({
@@ -222,6 +234,11 @@ export class EventController {
       properties: {
         name: { type: 'string', example: 'Updated Festival' },
         price: { type: 'number', example: 75.0 },
+        description: {
+          type: 'string',
+          example:
+            'A music festival hosted by Davido and Rema. You have to be there',
+        },
         maxTickets: { type: 'number', example: 200 },
         date: {
           type: 'string',

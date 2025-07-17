@@ -58,6 +58,7 @@ export class EventService {
           name: dto.name,
           price,
           maxTickets,
+          description: dto.description || dto.name,
           organizerId: userId,
           date: dto.date,
           isActive: true,
@@ -104,6 +105,7 @@ export class EventService {
       data: {
         name: dto.name || event.name,
         price: price ?? event.price,
+        description: dto.description ?? event.description,
         maxTickets: maxTickets ?? event.maxTickets,
         date: dto.date || event.date,
         bannerUrl,

@@ -25,6 +25,11 @@ export class UpdateEventDto {
   @Min(1, { message: 'There must be at least one ticket' })
   maxTickets?: number;
 
+  @IsOptional()
+  @IsString({ message: 'Event description must be a string' })
+  @MaxLength(500, { message: 'Event description is too long' })
+  description?: string;
+
   @IsDate({ message: 'Date must be valid' })
   date: Date;
 }

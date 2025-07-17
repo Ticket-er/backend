@@ -129,6 +129,14 @@ export class WalletService {
     };
   }
 
+  async getTransactions(userId) {
+    const transactions = await this.prisma.transaction.findMany({
+      where: { userId },
+    });
+
+    return transactions;
+  }
+
   //GET TRANSACTIONS
   //PAY FOR TICKET WITH WALLET IN FUTURE VERSIONS
 }

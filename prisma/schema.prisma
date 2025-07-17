@@ -46,7 +46,8 @@ model Wallet {
 model Event {
   id          String     @id @default(cuid())
   name        String
-  bannerUrl      String?
+  bannerUrl   String?
+  description String?
   price       Int
   maxTickets  Int
   minted      Int        @default(0)
