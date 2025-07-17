@@ -30,6 +30,10 @@ export class UpdateEventDto {
   @MaxLength(500, { message: 'Event description is too long' })
   description?: string;
 
+  @IsOptional()
+  @IsString({ message: 'Location must be a string' })
+  location: string;
+
   @IsDate({ message: 'Date must be valid' })
   date: Date;
 }

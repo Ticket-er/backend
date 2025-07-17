@@ -102,6 +102,10 @@ export class EventController {
           example:
             'A music festival hosted by Davido and Rema. You have to be there',
         },
+        location: {
+          type: 'string',
+          description: 'Lekki Conservation Centre, Lagos',
+        },
         maxTickets: { type: 'number', example: 100 },
         date: {
           type: 'string',
@@ -117,6 +121,7 @@ export class EventController {
         'maxTickets',
         'date',
         'description',
+        'location',
       ],
     },
   })
@@ -238,6 +243,10 @@ export class EventController {
           type: 'string',
           example:
             'A music festival hosted by Davido and Rema. You have to be there',
+        },
+        location: {
+          type: 'string',
+          description: 'Lekki Conservation Centre, Lagos',
         },
         maxTickets: { type: 'number', example: 200 },
         date: {

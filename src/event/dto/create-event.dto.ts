@@ -23,6 +23,9 @@ export class CreateEventDto {
   @Min(1, { message: 'There must be at least one ticket for an event' })
   maxTickets: number;
 
+  @IsString({ message: 'Location must be a string' })
+  location: string;
+
   @IsString({ message: 'Event description must be a string' })
   @MaxLength(500, {
     message: 'Event description cannot be longer than 500 characters',

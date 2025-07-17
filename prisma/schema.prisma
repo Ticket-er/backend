@@ -48,6 +48,7 @@ model Event {
   name        String
   bannerUrl   String?
   description String?
+  location    String?
   price       Int
   maxTickets  Int
   minted      Int        @default(0)
