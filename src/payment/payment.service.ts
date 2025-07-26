@@ -62,7 +62,8 @@ export class PaymentService {
   async verifyTransaction(reference: string) {
     try {
       this.logger.log(`Verifying transaction with reference: ${reference}`);
-      // Step 1: Verify payment with third-party provider
+
+      // Step 1: Verify with third-party
       const { data } = await this.httpService.axiosRef.get(
         `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`,
         {
@@ -76,67 +77,59 @@ export class PaymentService {
         throw new BadRequestException('Transaction verification failed');
       }
 
-      const existing = await this.prisma.transaction.findUnique({
-        where: { reference: data.reference },
+      // Step 2: Lock transaction row to prevent race conditions
+      const transaction = await this.prisma.$transaction(async (tx) => {
+        const txn = await tx.transaction.findUnique({
+          where: { reference },
+          include: {
+            event: true,
+            tickets: { include: { ticket: true } },
+          },
+        });
+
+        if (!txn) throw new NotFoundException('Transaction not found');
+
+        if (txn.status === 'SUCCESS') {
+          return { alreadyProcessed: true, txn };
+        }
+
+        await tx.transaction.update({
+          where: { reference },
+          data: { status: 'SUCCESS' },
+        });
+
+        return { alreadyProcessed: false, txn };
       });
 
-      if (existing?.status === 'SUCCESS') {
-        return { message: 'Already verified', success: true }; // 🛑 Early exit
+      if (transaction.alreadyProcessed) {
+        return { message: 'Already verified', success: true };
       }
 
-      // Step 2: Fetch transaction (with event + tickets)
-      this.logger.log(`Fetching transaction with reference: ${reference}`);
-      const transaction = await this.prisma.transaction.findUnique({
-        where: { reference },
-        include: {
-          event: true,
-          tickets: {
-            include: { ticket: true },
-          },
-        },
-      });
+      const { txn } = transaction;
 
-      if (!transaction) throw new NotFoundException('Transaction not found');
-      if (transaction.status === 'SUCCESS')
-        throw new BadRequestException('Transaction already verified');
-
-      // Step 3: Mark transaction as successful
-      this.logger.log(`Marking transaction as successful: ${reference}`);
-      await this.prisma.transaction.update({
-        where: { reference },
-        data: { status: 'SUCCESS' },
-      });
-
-      // Step 4: Extract ticket IDs from relation
-      let ticketIds = transaction.tickets
+      let ticketIds = txn.tickets
         .filter((tt) => tt.ticket && tt.ticket.id)
         .map((tt) => tt.ticket.id);
 
-      // Step 5: Primary ticket purchase flow
-      if (transaction.type === 'PRIMARY') {
+      // PRIMARY FLOW
+      if (txn.type === 'PRIMARY') {
         const ticketCount =
           ticketIds.length ||
-          (transaction?.event?.price
-            ? Math.floor(transaction.amount / transaction.event.price)
-            : 0);
+          (txn.event?.price ? Math.floor(txn.amount / txn.event.price) : 0);
 
-        // Create and attach tickets if none already created
         if (ticketIds.length === 0) {
           const newTicketIds: string[] = [];
+
           for (let i = 0; i < ticketCount; i++) {
-            const ticketData: any = {
-              userId: transaction.userId,
-            };
-            if (transaction.eventId) {
-              ticketData.eventId = transaction.eventId;
-            }
+            const ticketData: any = { userId: txn.userId };
+            if (txn.eventId) ticketData.eventId = txn.eventId;
+
             const ticket = await this.prisma.ticket.create({
               data: ticketData,
             });
             newTicketIds.push(ticket.id);
           }
 
-          // Attach tickets to the transaction
           await this.prisma.transaction.update({
             where: { reference },
             data: {
@@ -151,56 +144,46 @@ export class PaymentService {
           ticketIds = newTicketIds;
         }
 
-        // Update event minted count
-        if (!transaction.eventId) {
-          throw new NotFoundException('Event ID not found for transaction');
-        }
+        if (!txn.eventId || !txn.event)
+          throw new NotFoundException(
+            'Event data missing for primary transaction',
+          );
+
         await this.prisma.event.update({
-          where: { id: transaction.eventId },
+          where: { id: txn.eventId },
           data: { minted: { increment: ticketIds.length } },
         });
 
-        // Calculate platform cut and organizer proceeds
-        if (!transaction.event) {
-          throw new NotFoundException('Event not found for transaction');
-        }
         const platformCut = Math.floor(
-          (transaction.amount * transaction.event.primaryFeeBps) / 10000,
+          (txn.amount * txn.event.primaryFeeBps) / 10000,
         );
-        const organizerProceeds = transaction.amount - platformCut;
+        const organizerProceeds = txn.amount - platformCut;
 
-        // Pay organizer
         await this.prisma.wallet.update({
-          where: { userId: transaction.event.organizerId },
+          where: { userId: txn.event.organizerId },
           data: { balance: { increment: organizerProceeds } },
         });
 
-        // Pay platform admin
         const platformAdmin = await this.prisma.user.findUnique({
           where: { email: process.env.ADMIN_EMAIL },
         });
 
         if (platformAdmin) {
-          const adminWallet = await this.prisma.wallet.findUnique({
+          await this.prisma.wallet.upsert({
             where: { userId: platformAdmin.id },
+            create: { userId: platformAdmin.id, balance: platformCut },
+            update: { balance: { increment: platformCut } },
           });
-
-          if (!adminWallet) {
-            await this.prisma.wallet.upsert({
-              where: { userId: platformAdmin.id },
-              create: { userId: platformAdmin.id, balance: platformCut },
-              update: { balance: { increment: platformCut } },
-            });
-          }
         }
       }
 
-      // Step 6: Resale purchase flow
-      else if (transaction.type === 'RESALE') {
-        if (!ticketIds.length)
+      // RESALE FLOW
+      else if (txn.type === 'RESALE') {
+        if (!ticketIds.length) {
           throw new BadRequestException(
             'No ticket IDs found for resale transaction',
           );
+        }
 
         const tickets = await this.prisma.ticket.findMany({
           where: { id: { in: ticketIds } },
@@ -214,55 +197,45 @@ export class PaymentService {
         const event = tickets[0].event;
         if (!event) throw new NotFoundException('Event not found');
 
-        // Process each resale ticket
         for (const ticket of tickets) {
           const seller = await this.prisma.user.findUnique({
             where: { id: ticket.userId },
           });
           if (!seller) throw new NotFoundException('Seller not found');
 
-          const resalePrice = ticket.resalePrice!;
-
-          if (!ticket.resalePrice) {
+          if (
+            !ticket.resalePrice ||
+            !ticket.accountNumber ||
+            !ticket.bankCode
+          ) {
             throw new BadRequestException(
-              `Ticket ${ticket.id} has no resale price`,
+              `Ticket ${ticket.id} is missing resale price or payout info`,
             );
           }
 
           const platformCut = Math.floor(
-            (resalePrice * event.resaleFeeBps) / 10000,
+            (ticket.resalePrice * event.resaleFeeBps) / 10000,
           );
           const organizerRoyalty = Math.floor(
-            (resalePrice * event.royaltyFeeBps) / 10000,
+            (ticket.resalePrice * event.royaltyFeeBps) / 10000,
           );
-          const sellerProceeds = resalePrice - (platformCut + organizerRoyalty);
+          const sellerProceeds =
+            ticket.resalePrice - (platformCut + organizerRoyalty);
 
-          // Transfer ticket to buyer
           await this.prisma.ticket.update({
             where: { id: ticket.id },
             data: {
-              userId: transaction.userId,
+              userId: txn.userId,
               isListed: false,
               resalePrice: null,
               resaleCount: { increment: 1 },
               resaleCommission: platformCut + organizerRoyalty,
-              soldTo: transaction.userId,
+              soldTo: txn.userId,
             },
           });
 
-          // Pay seller
-
-          if (!ticket.accountNumber || !ticket.bankCode) {
-            throw new BadRequestException(
-              `Ticket ${ticket.id} is missing payout details`,
-            );
-          }
-
           await this.initiateWithdrawal({
-            customer: {
-              email: seller.email, // you'll need to fetch this above
-              name: seller.name,
-            },
+            customer: { email: seller.email, name: seller.name },
             amount: sellerProceeds,
             currency: 'NGN',
             destination: {
@@ -275,30 +248,21 @@ export class PaymentService {
             metadata: { userId: ticket.userId },
           });
 
-          // Pay organizer royalty
-
           await this.prisma.wallet.update({
             where: { userId: event.organizerId },
             data: { balance: { increment: organizerRoyalty } },
           });
 
-          // Pay platform cut
           const platformAdmin = await this.prisma.user.findUnique({
             where: { email: process.env.ADMIN_EMAIL },
           });
 
           if (platformAdmin) {
-            const adminWallet = await this.prisma.wallet.findUnique({
+            await this.prisma.wallet.upsert({
               where: { userId: platformAdmin.id },
+              create: { userId: platformAdmin.id, balance: platformCut },
+              update: { balance: { increment: platformCut } },
             });
-
-            if (!adminWallet) {
-              await this.prisma.wallet.upsert({
-                where: { userId: platformAdmin.id },
-                create: { userId: platformAdmin.id, balance: platformCut },
-                update: { balance: { increment: platformCut } },
-              });
-            }
           }
         }
       }
