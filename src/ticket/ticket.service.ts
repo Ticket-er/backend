@@ -168,51 +168,18 @@ export class TicketService {
         `Initiating payment for transaction from url ${process.env.FRONTEND_URL + clientPage} `,
       );
 
-      if (dto.useWallet) {
-        try {
-          await this.payFromWallet(userId, totalAmount + totalAmount * 0.05);
+      checkoutUrl = await this.paymentService.initiatePayment({
+        customer: { email: user.email, name: user.name },
+        amount: totalAmount + totalAmount * (5 / 100),
+        currency: 'NGN',
+        reference,
+        processor: 'kora',
+        narration: `Tickets for ${event.name}`,
+        notification_url: `${process.env.NOTIFICATION_URL}`,
+        // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
+        metadata: { ticketIds },
+      });
 
-          await this.prisma.transaction.update({
-            where: { reference },
-            data: { status: 'SUCCESS' },
-          });
-
-          // Update event.minted
-          await this.prisma.event.update({
-            where: { id: dto.eventId },
-            data: {
-              minted: {
-                increment: dto.quantity,
-              },
-            },
-          });
-
-          return { message: 'Tickets purchased successfully via wallet' };
-        } catch (walletError) {
-          await this.prisma.transaction.update({
-            where: { reference },
-            data: { status: 'FAILED' },
-          });
-
-          await this.prisma.ticket.deleteMany({
-            where: { id: { in: ticketIds } },
-          });
-
-          throw walletError;
-        }
-      } else {
-        checkoutUrl = await this.paymentService.initiatePayment({
-          customer: { email: user.email, name: user.name },
-          amount: totalAmount + totalAmount * (5 / 100),
-          currency: 'NGN',
-          reference,
-          processor: 'kora',
-          narration: `Tickets for ${event.name}`,
-          notification_url: `${process.env.NOTIFICATION_URL}`,
-          // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
-          metadata: { ticketIds },
-        });
-      }
       if (!checkoutUrl) {
         throw new Error('No checkout URL returned from payment gateway');
       }
@@ -251,141 +218,132 @@ export class TicketService {
 
   async buyResaleTicket(dto: BuyResaleDto, userId: string) {
     try {
-      // Step 1: Validate tickets
-      const tickets = await this.prisma.ticket.findMany({
-        where: {
-          id: { in: dto.ticketIds },
-          isListed: true,
-          resalePrice: { not: null },
-        },
-        include: { event: true, user: true },
-      });
+      const { ticketIds } = dto;
 
-      if (tickets.length !== dto.ticketIds.length) {
-        throw new NotFoundException(
-          'One or more tickets not found or not listed for resale',
-        );
-      }
+      return await this.prisma.$transaction(async (tx) => {
+        const tickets = await tx.ticket.findMany({
+          where: {
+            id: { in: ticketIds },
+            isListed: true,
+            resalePrice: { not: null },
+          },
+          include: { event: true, user: true },
+        });
 
-      // Step 1.5: Ensure all tickets belong to the same event
-      const eventId = tickets[0].eventId;
-      const allSameEvent = tickets.every(
-        (ticket) => ticket.eventId === eventId,
-      );
-      if (!allSameEvent) {
-        throw new BadRequestException(
-          'All tickets must belong to the same event',
-        );
-      }
-
-      // Step 2: Validate ticket conditions
-      for (const ticket of tickets) {
-        if (ticket.userId === userId) {
-          throw new BadRequestException('You cannot buy your own ticket');
-        }
-        if (!ticket.event.isActive || ticket.event.date < new Date()) {
-          throw new BadRequestException(
-            `Event for ticket ${ticket.id} is not active or has passed`,
+        if (tickets.length !== ticketIds.length) {
+          throw new NotFoundException(
+            'One or more tickets not found or not listed for resale',
           );
         }
-      }
 
-      // Step 3: Validate buyer
-      const buyer = await this.prisma.user.findUnique({
-        where: { id: userId },
-      });
-      if (!buyer) throw new NotFoundException('Buyer not found');
-
-      // Step 4: Calculate total amount
-      const totalAmount = tickets.reduce(
-        (sum, ticket) => sum + (ticket.resalePrice || 0),
-        0,
-      );
-
-      // Step 5: Generate unique reference
-      const reference = `resale_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
-      // Step 6: Create transaction record
-      await this.prisma.transaction.create({
-        data: {
-          reference,
-          userId: userId,
-          eventId,
-          tickets: {
-            create: tickets.map((t) => ({
-              ticket: {
-                connect: { id: t.id },
+        // Check for duplicates (any ticket already locked)
+        const existingTx = await tx.transaction.findFirst({
+          where: {
+            status: 'PENDING',
+            type: 'RESALE',
+            tickets: {
+              some: {
+                ticketId: { in: ticketIds },
               },
-            })),
+            },
           },
-          amount: totalAmount + totalAmount * (5 / 100),
-          type: 'RESALE',
-          status: 'PENDING',
-        },
-      });
+        });
 
-      // Step 7: Initiate payment
-      let checkoutUrl: string | null = null;
-
-      if (dto.useWallet) {
-        try {
-          await this.payFromWallet(userId, totalAmount + totalAmount * 0.05);
-
-          await this.prisma.transaction.update({
-            where: { reference },
-            data: { status: 'SUCCESS' },
-          });
-
-          // Update tickets: new owner and remove from listing
-          for (const ticket of tickets) {
-            await this.prisma.ticket.update({
-              where: { id: ticket.id },
-              data: {
-                userId,
-                isListed: false,
-                listedAt: null,
-                resalePrice: null,
-                resaleCount: { increment: 1 },
-                soldTo: ticket.userId,
-                resaleCommission: Math.floor(ticket.resalePrice! * 0.05),
-              },
-            });
-          }
-
-          return {
-            message: 'Resale tickets purchased successfully via wallet',
-          };
-        } catch (walletError) {
-          await this.prisma.transaction.update({
-            where: { reference },
-            data: { status: 'FAILED' },
-          });
-
-          throw walletError;
+        if (existingTx) {
+          throw new BadRequestException(
+            `Some tickets are already reserved in another transaction`,
+          );
         }
-      } else {
-        checkoutUrl = await this.paymentService.initiatePayment({
+
+        const eventId = tickets[0].eventId;
+        const allSameEvent = tickets.every(
+          (ticket) => ticket.eventId === eventId,
+        );
+        if (!allSameEvent) {
+          throw new BadRequestException(
+            'All tickets must belong to the same event',
+          );
+        }
+
+        for (const ticket of tickets) {
+          if (ticket.userId === userId) {
+            throw new BadRequestException('You cannot buy your own ticket');
+          }
+          if (!ticket.event.isActive || ticket.event.date < new Date()) {
+            throw new BadRequestException(
+              `Event for ticket ${ticket.id} is not active or has passed`,
+            );
+          }
+        }
+
+        const buyer = await tx.user.findUnique({
+          where: { id: userId },
+        });
+        if (!buyer) throw new NotFoundException('Buyer not found');
+
+        const totalAmount = tickets.reduce(
+          (sum, ticket) => sum + (ticket.resalePrice || 0),
+          0,
+        );
+        const fee = totalAmount * 0.05;
+        const finalAmount = totalAmount + fee;
+
+        const reference = `resale_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 6)}`;
+
+        // Step: Lock tickets immediately to prevent double-purchase
+        await tx.ticket.updateMany({
+          where: { id: { in: ticketIds } },
+          data: { isListed: false },
+        });
+
+        // Create transaction
+        await tx.transaction.create({
+          data: {
+            reference,
+            userId,
+            eventId,
+            amount: finalAmount,
+            type: 'RESALE',
+            status: 'PENDING',
+            tickets: {
+              create: ticketIds.map((id) => ({
+                ticket: { connect: { id } },
+              })),
+            },
+          },
+        });
+
+        const checkoutUrl = await this.paymentService.initiatePayment({
           customer: {
             email: buyer.email,
             name: buyer.name,
           },
-          amount: totalAmount + totalAmount * (5 / 100),
+          amount: finalAmount,
           currency: 'NGN',
           reference,
           processor: 'kora',
           narration: `Resale tickets for ${tickets[0].event.name}`,
           notification_url: `${process.env.NOTIFICATION_URL}`,
-          // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
-          metadata: { ticketIds: dto.ticketIds },
+          metadata: { ticketIds },
         });
-      }
 
-      if (!checkoutUrl) {
-        await this.prisma.transaction.delete({ where: { reference } });
-        throw new BadRequestException('Failed to generate payment link');
-      }
+        if (!checkoutUrl) {
+          // Revert lock (reset isListed)
+          await tx.ticket.updateMany({
+            where: { id: { in: ticketIds } },
+            data: { isListed: true },
+          });
 
-      return { checkoutUrl };
+          // Delete the transaction
+          await tx.transaction.delete({ where: { reference } });
+
+          throw new BadRequestException('Failed to generate payment link');
+        }
+
+        return { checkoutUrl };
+      });
     } catch (error) {
       console.error('[Buy Resale Ticket Error]', error);
 
@@ -403,80 +361,70 @@ export class TicketService {
     }
   }
 
-  async payFromWallet(userId: string, amount: number) {
-    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) throw new NotFoundException('Wallet not found');
-
-    if (wallet.balance.lt(amount)) {
-      throw new BadRequestException('Insufficient wallet balance');
-    }
-
-    await this.prisma.wallet.update({
-      where: { userId },
-      data: { balance: { decrement: amount } },
-    });
-  }
-
   async listForResale(dto: ListResaleDto, userId: string) {
-    const ticketId = dto.ticketId;
+    const { ticketId, resalePrice, bankCode, accountNumber } = dto;
 
-    // Step 1: Validate ticket
-    const ticket = await this.prisma.ticket.findFirst({
-      where: {
-        id: ticketId,
-        userId,
-      },
-      include: { event: true },
-    });
-
-    if (!ticket) {
-      throw new NotFoundException('Ticket not found or not owned by user');
-    }
-
-    // Step 2: Validate ticket conditions
-    if (ticket.isUsed) {
-      throw new BadRequestException(
-        `Ticket ${ticket.id} has already been used`,
-      );
-    }
-
-    if (ticket.isListed) {
-      throw new BadRequestException(`Ticket ${ticket.id} is already listed`);
-    }
-
-    if (ticket.resaleCount >= 1) {
-      throw new BadRequestException(
-        `Ticket ${ticket.id} can only be resold once`,
-      );
-    }
-
-    if (
-      !ticket.event ||
-      !ticket.event.isActive ||
-      ticket.event.date < new Date()
-    ) {
-      throw new BadRequestException(
-        `Event is not active or has already passed`,
-      );
-    }
-
-    // Step 3: List ticket
-    try {
-      await this.prisma.ticket.update({
-        where: { id: ticketId },
-        data: {
-          isListed: true,
-          resalePrice: dto.resalePrice,
-          listedAt: new Date(),
+    return this.prisma.$transaction(async (tx) => {
+      // Step 1: Fetch ticket with lock (deduping logic inside transaction)
+      const ticket = await tx.ticket.findFirst({
+        where: {
+          id: ticketId,
+          userId,
         },
+        include: { event: true },
       });
-    } catch (error) {
-      console.error('[List Resale Ticket Error]', error);
-      throw new BadRequestException('Failed to list ticket for resale');
-    }
 
-    // Step 4: Return updated ticket
-    return this.prisma.ticket.findUnique({ where: { id: ticketId } });
+      if (!ticket) {
+        throw new NotFoundException('Ticket not found or not owned by user');
+      }
+
+      // Step 2: Validate ticket conditions
+      if (ticket.isUsed) {
+        throw new BadRequestException(
+          `Ticket ${ticket.id} has already been used`,
+        );
+      }
+
+      if (ticket.isListed) {
+        throw new BadRequestException(`Ticket ${ticket.id} is already listed`);
+      }
+
+      if (ticket.resaleCount >= 1) {
+        throw new BadRequestException(
+          `Ticket ${ticket.id} can only be resold once`,
+        );
+      }
+
+      if (
+        !ticket.event ||
+        !ticket.event.isActive ||
+        ticket.event.date < new Date()
+      ) {
+        throw new BadRequestException(
+          `Event is not active or has already passed`,
+        );
+      }
+
+      // Step 3: Atomically update ticket
+      try {
+        await tx.ticket.update({
+          where: { id: ticketId },
+          data: {
+            isListed: true,
+            resalePrice,
+            listedAt: new Date(),
+            bankCode,
+            accountNumber,
+          },
+        });
+      } catch (error) {
+        console.error('[List Resale Ticket Error]', error);
+        throw new BadRequestException('Failed to list ticket for resale');
+      }
+
+      // Step 4: Return updated ticket
+      return tx.ticket.findUnique({ where: { id: ticketId } });
+    });
   }
 
   async getResaleTickets(eventId?: string) {
@@ -487,9 +435,7 @@ export class TicketService {
       where,
       include: {
         event: true,
-        user: {
-          select: { id: true, name: true, email: true, profileImage: true },
-        }, // seller info
+        user: { select: { id: true, name: true, email: true } }, // seller info
       },
       orderBy: { listedAt: 'desc' },
     });

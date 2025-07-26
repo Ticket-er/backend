@@ -7,4 +7,10 @@ export class ListResaleDto {
 
   @IsString({ message: 'Ticket ID must be a string' })
   ticketId: string;
+
+  @IsString({ message: 'Bank code is required' })
+  bankCode: string;
+
+  @IsString({ message: 'Account number is required' })
+  accountNumber: string;
 }

@@ -76,6 +76,14 @@ export class PaymentService {
         throw new BadRequestException('Transaction verification failed');
       }
 
+      const existing = await this.prisma.transaction.findUnique({
+        where: { reference: data.reference },
+      });
+
+      if (existing?.status === 'SUCCESS') {
+        return { message: 'Already verified', success: true }; // 🛑 Early exit
+      }
+
       // Step 2: Fetch transaction (with event + tickets)
       this.logger.log(`Fetching transaction with reference: ${reference}`);
       const transaction = await this.prisma.transaction.findUnique({
@@ -100,7 +108,9 @@ export class PaymentService {
       });
 
       // Step 4: Extract ticket IDs from relation
-      let ticketIds = transaction.tickets.map((tt) => tt.ticket.id);
+      let ticketIds = transaction.tickets
+        .filter((tt) => tt.ticket && tt.ticket.id)
+        .map((tt) => tt.ticket.id);
 
       // Step 5: Primary ticket purchase flow
       if (transaction.type === 'PRIMARY') {
@@ -160,16 +170,6 @@ export class PaymentService {
         const organizerProceeds = transaction.amount - platformCut;
 
         // Pay organizer
-        let organizerWallet = await this.prisma.wallet.findUnique({
-          where: { userId: transaction.event.organizerId },
-        });
-
-        if (!organizerWallet) {
-          organizerWallet = await this.prisma.wallet.create({
-            data: { userId: transaction.event.organizerId, balance: 0 },
-          });
-        }
-
         await this.prisma.wallet.update({
           where: { userId: transaction.event.organizerId },
           data: { balance: { increment: organizerProceeds } },
@@ -177,24 +177,21 @@ export class PaymentService {
 
         // Pay platform admin
         const platformAdmin = await this.prisma.user.findUnique({
-          where: { email: 'kareola960@gmail.com' },
+          where: { email: process.env.ADMIN_EMAIL },
         });
 
         if (platformAdmin) {
-          let adminWallet = await this.prisma.wallet.findUnique({
+          const adminWallet = await this.prisma.wallet.findUnique({
             where: { userId: platformAdmin.id },
           });
 
           if (!adminWallet) {
-            adminWallet = await this.prisma.wallet.create({
-              data: { userId: platformAdmin.id, balance: 0 },
+            await this.prisma.wallet.upsert({
+              where: { userId: platformAdmin.id },
+              create: { userId: platformAdmin.id, balance: platformCut },
+              update: { balance: { increment: platformCut } },
             });
           }
-
-          await this.prisma.wallet.update({
-            where: { userId: platformAdmin.id },
-            data: { balance: { increment: platformCut } },
-          });
         }
       }
 
@@ -219,7 +216,19 @@ export class PaymentService {
 
         // Process each resale ticket
         for (const ticket of tickets) {
+          const seller = await this.prisma.user.findUnique({
+            where: { id: ticket.userId },
+          });
+          if (!seller) throw new NotFoundException('Seller not found');
+
           const resalePrice = ticket.resalePrice!;
+
+          if (!ticket.resalePrice) {
+            throw new BadRequestException(
+              `Ticket ${ticket.id} has no resale price`,
+            );
+          }
+
           const platformCut = Math.floor(
             (resalePrice * event.resaleFeeBps) / 10000,
           );
@@ -242,31 +251,31 @@ export class PaymentService {
           });
 
           // Pay seller
-          let sellerWallet = await this.prisma.wallet.findUnique({
-            where: { userId: event.organizerId },
-          });
 
-          if (!sellerWallet) {
-            sellerWallet = await this.prisma.wallet.create({
-              data: { userId: event.organizerId, balance: 0 },
-            });
+          if (!ticket.accountNumber || !ticket.bankCode) {
+            throw new BadRequestException(
+              `Ticket ${ticket.id} is missing payout details`,
+            );
           }
 
-          await this.prisma.wallet.update({
-            where: { userId: ticket.userId },
-            data: { balance: { increment: sellerProceeds } },
+          await this.initiateWithdrawal({
+            customer: {
+              email: seller.email, // you'll need to fetch this above
+              name: seller.name,
+            },
+            amount: sellerProceeds,
+            currency: 'NGN',
+            destination: {
+              account_number: ticket.accountNumber,
+              bank_code: ticket.bankCode,
+            },
+            reference: `resale_payout_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            notification_url: `${process.env.NOTIFICATION_URL}`,
+            narration: `Resale payout for ticket ${ticket.id}`,
+            metadata: { userId: ticket.userId },
           });
 
           // Pay organizer royalty
-          let organizerWallet = await this.prisma.wallet.findUnique({
-            where: { userId: event.organizerId },
-          });
-
-          if (!organizerWallet) {
-            organizerWallet = await this.prisma.wallet.create({
-              data: { userId: event.organizerId, balance: 0 },
-            });
-          }
 
           await this.prisma.wallet.update({
             where: { userId: event.organizerId },
@@ -275,24 +284,21 @@ export class PaymentService {
 
           // Pay platform cut
           const platformAdmin = await this.prisma.user.findUnique({
-            where: { email: 'kareola960@gmail.com' },
+            where: { email: process.env.ADMIN_EMAIL },
           });
 
           if (platformAdmin) {
-            let adminWallet = await this.prisma.wallet.findUnique({
+            const adminWallet = await this.prisma.wallet.findUnique({
               where: { userId: platformAdmin.id },
             });
 
             if (!adminWallet) {
-              adminWallet = await this.prisma.wallet.create({
-                data: { userId: platformAdmin.id, balance: 0 },
+              await this.prisma.wallet.upsert({
+                where: { userId: platformAdmin.id },
+                create: { userId: platformAdmin.id, balance: platformCut },
+                update: { balance: { increment: platformCut } },
               });
             }
-
-            await this.prisma.wallet.update({
-              where: { userId: platformAdmin.id },
-              data: { balance: { increment: platformCut } },
-            });
           }
         }
       }
