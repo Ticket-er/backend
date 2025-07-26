@@ -79,6 +79,29 @@ export class EventController {
     return this.eventService.getAllEvents();
   }
 
+  @Get(':id')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Get event by ID',
+    description: 'Retrieves a single event by its UUID.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'UUID of the event',
+    type: String,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Event found',
+    type: Object,
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
+  getEvent(@Param('id') id: string) {
+    return this.eventService.getSingleEvent(id);
+  }
+
   @UseGuards(JwtGuard, RolesGuard)
   @Post('create')
   @HttpCode(201)

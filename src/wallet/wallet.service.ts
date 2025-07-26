@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PaymentService } from 'src/payment/payment.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class WalletService {
@@ -13,7 +14,34 @@ export class WalletService {
     private readonly paymentService: PaymentService,
   ) {}
 
-  async addFunds(userId: string, amount: number) {
+  async createWallet(userId: string, rawPin?: string) {
+    const existingWallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+    });
+    if (existingWallet) {
+      throw new BadRequestException('Wallet already exists');
+    }
+
+    let hashedPin: string | undefined = undefined;
+    if (rawPin) {
+      const salt = await bcrypt.genSalt(10);
+      hashedPin = await bcrypt.hash(rawPin, salt);
+    }
+
+    const wallet = await this.prisma.wallet.create({
+      data: {
+        userId,
+        pin: hashedPin,
+      },
+    });
+
+    return {
+      message: 'Wallet created successfully',
+      walletId: wallet.id,
+    };
+  }
+
+  async addFunds(userId: string, amount: number, clientPage: string) {
     // Step 1: Validate wallet
     const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
@@ -47,6 +75,8 @@ export class WalletService {
       currency: 'NGN',
       reference,
       processor: 'kora',
+      redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
+      notification_url: `${process.env.NOTIFICATION_URL}`,
       narration: 'Wallet top-up',
       metadata: {
         action: 'fund_wallet',
@@ -83,14 +113,30 @@ export class WalletService {
     payload: {
       email: string;
       name: string;
+      pin: string;
       amount: number;
       account_number: string;
       bank_code: string;
       narration?: string;
     },
   ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (user?.role === 'USER')
+      throw new BadRequestException(
+        'Users cannot withdraw funds...buy a ticket instead',
+      );
     const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
     if (!wallet) throw new NotFoundException('Wallet not found');
+    if (!wallet.pin) {
+      throw new BadRequestException(
+        'PIN not set. Please set your wallet PIN before withdrawing.',
+      );
+    }
+
+    const isPinValid = await bcrypt.compare(payload.pin, wallet.pin);
+    if (!isPinValid) {
+      throw new BadRequestException('Invalid PIN provided.');
+    }
 
     if (wallet.balance.lt(payload.amount)) {
       throw new BadRequestException('Insufficient wallet balance');
@@ -129,9 +175,23 @@ export class WalletService {
     };
   }
 
-  async getTransactions(userId) {
+  async getTransactions(userId: string) {
     const transactions = await this.prisma.transaction.findMany({
       where: { userId },
+      include: {
+        tickets: {
+          include: {
+            ticket: {
+              include: {
+                event: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
 
     return transactions;

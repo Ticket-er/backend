@@ -70,7 +70,7 @@ export class AuthService {
       expiresIn: '2 days',
     });
 
-    return { access_token: token };
+    return { access_token: token, user };
   }
 
   async verifyOtp(dto: VerifyOtpDto) {

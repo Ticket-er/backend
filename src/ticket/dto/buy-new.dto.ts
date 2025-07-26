@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsNumber, Max, Min } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  Max,
+  Min,
+  IsBoolean,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class BuyNewDto {
@@ -21,4 +28,12 @@ export class BuyNewDto {
   @Min(1, { message: 'You must buy at least 1 ticket' })
   @Max(10, { message: 'Quantity cannot exceed 10' })
   quantity: number;
+
+  @ApiProperty({
+    description: 'Whether to use wallet balance for the purchase',
+    example: true,
+  })
+  @IsNotEmpty({ message: 'Use wallet cannot be empty' })
+  @IsBoolean({ message: 'Use wallet must be a boolean' })
+  useWallet?: boolean;
 }

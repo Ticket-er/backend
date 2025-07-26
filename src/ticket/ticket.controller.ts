@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -24,12 +25,12 @@ import {
 import { BuyResaleDto } from './dto/buy-resale.dto';
 
 @ApiTags('Tickets')
-@UseGuards(JwtGuard)
 @Controller('v1/tickets')
 @ApiBearerAuth()
 export class TicketController {
   constructor(private ticketService: TicketService) {}
 
+  @UseGuards(JwtGuard)
   @Post('verify')
   @ApiOperation({
     summary: 'Verify a ticket (scan or code input)',
@@ -55,6 +56,7 @@ export class TicketController {
     });
   }
 
+  @UseGuards(JwtGuard)
   @Post(':eventId/buy')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
@@ -92,13 +94,15 @@ export class TicketController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   buyNew(
     @Param('eventId') eventId: string,
+    @Headers('x-client-page') clientPage: string,
     @Body() dto: BuyNewDto,
     @Req() req,
   ) {
     dto.eventId = eventId;
-    return this.ticketService.buyNewTicket(dto, req.user.sub);
+    return this.ticketService.buyNewTicket(dto, req.user.sub, clientPage);
   }
 
+  @UseGuards(JwtGuard)
   @Post('resale/buy')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
@@ -143,13 +147,13 @@ export class TicketController {
     return this.ticketService.buyResaleTicket(dto, req.user.sub);
   }
 
+  @UseGuards(JwtGuard)
   @Post('resale/list')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'List multiple tickets for resale',
-    description:
-      'Lists one or more tickets for resale by the authenticated user.',
+    description: 'Lists one ticket for resale by the authenticated user.',
   })
   @ApiBody({ type: ListResaleDto })
   @ApiResponse({
@@ -208,6 +212,7 @@ export class TicketController {
     return this.ticketService.getResaleTickets(eventId);
   }
 
+  @UseGuards(JwtGuard)
   @Get('my/resales')
   @ApiOperation({
     summary: 'Get my resale listings',
@@ -246,6 +251,7 @@ export class TicketController {
     return this.ticketService.getBoughtFromResale(req.user.sub);
   }
 
+  @UseGuards(JwtGuard)
   @Get('my')
   @ApiOperation({
     summary: 'Get my tickets',

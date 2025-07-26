@@ -52,8 +52,8 @@ export class UserService {
     return { message: 'Profile updated successfully', user: updatedUser };
   }
 
-  async becomeOrganizer(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  async becomeOrganizer(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
 
     if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ORGANIZER') {
@@ -62,15 +62,17 @@ export class UserService {
 
     // Update role
     await this.prisma.user.update({
-      where: { id: userId },
+      where: { id: user.id },
       data: { role: 'ORGANIZER' },
     });
 
     // Ensure wallet exists
-    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId: user.id },
+    });
     if (!wallet) {
       await this.prisma.wallet.create({
-        data: { userId, balance: 0 },
+        data: { userId: user.id, balance: 0 },
       });
     }
 

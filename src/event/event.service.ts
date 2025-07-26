@@ -140,12 +140,58 @@ export class EventService {
     return events;
   }
 
+  async getSingleEvent(eventId) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: {
+        organizer: {
+          select: { name: true, email: true, profileImage: true },
+        },
+        tickets: {
+          where: { isListed: true },
+          select: {
+            id: true,
+            resalePrice: true,
+            listedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                profileImage: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    return event;
+  }
+
   async getAllEvents() {
     return this.prisma.event.findMany({
       where: { isActive: true },
       include: {
         organizer: {
-          select: { name: true, email: true },
+          select: { name: true, email: true, profileImage: true },
+        },
+        tickets: {
+          where: { isListed: true },
+          select: {
+            id: true,
+            resalePrice: true,
+            listedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                profileImage: true, // optional if you use it
+              },
+            },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -181,7 +227,6 @@ export class EventService {
 
     return events;
   }
-
   async getUserEvents(userId: string) {
     const tickets = await this.prisma.ticket.findMany({
       where: { userId },
@@ -192,8 +237,13 @@ export class EventService {
       (acc, ticket) => {
         const id = ticket.eventId;
         if (!acc[id]) {
-          acc[id] = { ...ticket.event, ticketCount: 0 };
+          acc[id] = {
+            ...ticket.event,
+            tickets: [],
+            ticketCount: 0,
+          };
         }
+        acc[id].tickets.push(ticket);
         acc[id].ticketCount++;
         return acc;
       },

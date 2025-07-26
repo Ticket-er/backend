@@ -84,9 +84,7 @@ export class UserController {
   }
 
   @Patch('become-organizer')
-  @UseGuards(JwtGuard)
-  async becomeOrganizer(@Req() req) {
-    const userId = req.user.sub;
-    return this.userService.becomeOrganizer(userId);
+  async becomeOrganizer(@Body() body: { email: string }) {
+    return this.userService.becomeOrganizer(body.email);
   }
 }

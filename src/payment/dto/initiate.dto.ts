@@ -45,6 +45,10 @@ export class InitiateDto {
   @IsOptional()
   notification_url?: string;
 
+  @IsString()
+  @IsOptional()
+  redirect_url?: string;
+
   @IsObject()
   @IsOptional()
   metadata?: Record<string, any>;

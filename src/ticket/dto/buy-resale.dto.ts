@@ -1,4 +1,10 @@
-import { IsArray, IsString, ArrayNotEmpty } from 'class-validator';
+import {
+  IsArray,
+  IsString,
+  ArrayNotEmpty,
+  IsBoolean,
+  IsNotEmpty,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class BuyResaleDto {
@@ -11,4 +17,12 @@ export class BuyResaleDto {
   @ArrayNotEmpty({ message: 'Ticket ID list cannot be empty' })
   @IsString({ each: true, message: 'Each ticket ID must be a string' })
   ticketIds: string[];
+
+  @ApiProperty({
+    description: 'Whether to use wallet balance for the purchase',
+    example: true,
+  })
+  @IsNotEmpty({ message: 'Use wallet cannot be empty' })
+  @IsBoolean({ message: 'Use wallet must be a boolean' })
+  useWallet?: boolean;
 }
