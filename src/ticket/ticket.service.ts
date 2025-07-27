@@ -103,6 +103,11 @@ export class TicketService {
       throw new NotFoundException('User not found');
     }
 
+    if (userId === event.organizerId) {
+      this.logger.warn(`Organizer ${userId} cannot buy their own tickets`);
+      throw new BadRequestException('Organizer cannot buy their own tickets');
+    }
+
     // Step 4: Generate unique reference
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -272,6 +277,15 @@ export class TicketService {
           if (!ticket.event.isActive || ticket.event.date < new Date()) {
             throw new BadRequestException(
               `Event for ticket ${ticket.id} is not active or has passed`,
+            );
+          }
+
+          if (userId === ticket.event.organizerId) {
+            this.logger.warn(
+              `Organizer ${userId} cannot buy their own tickets`,
+            );
+            throw new BadRequestException(
+              'Organizer cannot buy their own tickets',
             );
           }
         }
