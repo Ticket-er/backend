@@ -111,8 +111,8 @@ export class PaymentService {
         .filter((tt) => tt.ticket && tt.ticket.id)
         .map((tt) => tt.ticket.id);
 
-      // PRIMARY FLOW
-      if (txn.type === 'PRIMARY') {
+      // PURCHASE FLOW
+      if (txn.type === 'PURCHASE') {
         const ticketCount =
           ticketIds.length ||
           (txn.event?.price ? Math.floor(txn.amount / txn.event.price) : 0);
@@ -146,7 +146,7 @@ export class PaymentService {
 
         if (!txn.eventId || !txn.event)
           throw new NotFoundException(
-            'Event data missing for primary transaction',
+            'Event data missing for purchase transaction',
           );
 
         await this.prisma.event.update({
@@ -239,8 +239,9 @@ export class PaymentService {
             amount: sellerProceeds,
             currency: 'NGN',
             destination: {
-              account_number: ticket.accountNumber,
-              bank_code: ticket.bankCode,
+              account_number:
+                `${process.env.TEXT_BANK_ACCOUNT}` || ticket.accountNumber,
+              bank_code: `${process.env.TEXT_BANK_CODE}` || ticket.bankCode,
             },
             reference: `resale_payout_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             notification_url: `${process.env.NOTIFICATION_URL}`,

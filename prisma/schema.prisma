@@ -119,7 +119,7 @@ model TransactionTicket {
 }
 
 enum TransactionType {
-  PRIMARY
+  PURCHASE
   RESALE
   WITHDRAW
   FUND

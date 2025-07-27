@@ -3,7 +3,6 @@ import {
   Controller,
   Get,
   Headers,
-  Param,
   Post,
   Query,
   Req,
@@ -57,7 +56,7 @@ export class TicketController {
   }
 
   @UseGuards(JwtGuard)
-  @Post(':eventId/buy')
+  @Post('buy')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({
@@ -93,16 +92,13 @@ export class TicketController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   buyNew(
-    @Param('eventId') eventId: string,
     @Headers('x-client-page') clientPage: string,
     @Body() dto: BuyNewDto,
     @Req() req,
   ) {
-    dto.eventId = eventId;
     return this.ticketService.buyNewTicket(dto, req.user.sub, clientPage);
   }
 
-  @UseGuards(JwtGuard)
   @Post('resale/buy')
   @UseGuards(JwtGuard)
   @ApiBearerAuth()

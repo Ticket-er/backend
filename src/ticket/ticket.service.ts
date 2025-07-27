@@ -138,7 +138,7 @@ export class TicketService {
           reference,
           userId,
           eventId: dto.eventId,
-          type: 'PRIMARY',
+          type: 'PURCHASE',
           status: 'PENDING',
           amount: totalAmount + totalAmount * (5 / 100),
           tickets: {
@@ -285,8 +285,7 @@ export class TicketService {
           (sum, ticket) => sum + (ticket.resalePrice || 0),
           0,
         );
-        const fee = totalAmount * 0.05;
-        const finalAmount = totalAmount + fee;
+        const finalAmount = totalAmount;
 
         const reference = `resale_${Date.now()}_${Math.random()
           .toString(36)
@@ -326,6 +325,7 @@ export class TicketService {
           processor: 'kora',
           narration: `Resale tickets for ${tickets[0].event.name}`,
           notification_url: `${process.env.NOTIFICATION_URL}`,
+          // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
           metadata: { ticketIds },
         });
 
@@ -435,7 +435,9 @@ export class TicketService {
       where,
       include: {
         event: true,
-        user: { select: { id: true, name: true, email: true } }, // seller info
+        user: {
+          select: { id: true, name: true, email: true, profileImage: true },
+        }, // seller info
       },
       orderBy: { listedAt: 'desc' },
     });

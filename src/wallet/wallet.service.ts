@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -94,15 +95,97 @@ export class WalletService {
     });
   }
 
-  async getTransactions(userId: string) {
-    const transactions = await this.prisma.transaction.findMany({
-      where: { userId },
+  async getTransactions(organizerId: string) {
+    // Verify organizer exists and get their wallet
+    const user = await this.prisma.user.findUnique({
+      where: { id: organizerId },
       include: {
+        wallet: true,
+        events: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Organizer not found');
+    }
+
+    if (!user.wallet) {
+      throw new NotFoundException('Organizer wallet not found');
+    }
+
+    if (
+      user.role !== 'ORGANIZER' &&
+      user.role !== 'ADMIN' &&
+      user.role !== 'SUPERADMIN'
+    ) {
+      throw new ForbiddenException('User is not an organizer');
+    }
+
+    // Get event IDs for events created by this organizer
+    const eventIds = user.events.map((event) => event.id);
+
+    // Fetch transactions related to the organizer's events (purchases and resales)
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        OR: [
+          // Transactions for events organized by this user (purchases or resales)
+          {
+            eventId: {
+              in: eventIds,
+            },
+            type: {
+              in: ['PURCHASE', 'RESALE'],
+            },
+            status: 'SUCCESS',
+          },
+          // Withdrawals from the organizer's wallet
+          {
+            userId: organizerId,
+            type: 'WITHDRAW',
+            status: {
+              in: ['SUCCESS', 'FAILED'],
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        reference: true,
+        amount: true,
+        type: true,
+        status: true,
+        createdAt: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        event: {
+          select: {
+            id: true,
+            name: true,
+            resaleFeeBps: true, // Include resaleFeeBps for calculating platform fee
+          },
+        },
         tickets: {
-          include: {
+          select: {
             ticket: {
-              include: {
-                event: true,
+              select: {
+                id: true,
+                code: true,
+                event: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
               },
             },
           },
@@ -113,9 +196,24 @@ export class WalletService {
       },
     });
 
-    return transactions;
+    // Map transactions to a clean response format
+    return transactions.map((tx) => ({
+      id: tx.id,
+      reference: tx.reference,
+      type: tx.type,
+      amount:
+        tx.type === 'RESALE'
+          ? Math.round((tx.amount * (tx.event?.resaleFeeBps ?? 500)) / 10000)
+          : tx.amount, // 5% for RESALE, full amount otherwise
+      status: tx.status,
+      createdAt: tx.createdAt,
+      buyer: tx.type !== 'WITHDRAW' ? tx.user : null, // Buyer info for purchases/resales, null for withdrawals
+      event: tx.event ?? null, // Event info for purchases/resales, null for withdrawals
+      tickets: tx.tickets.map((t) => ({
+        id: t.ticket.id,
+        code: t.ticket.code,
+        event: t.ticket.event,
+      })),
+    }));
   }
-
-  //GET TRANSACTIONS
-  //PAY FOR TICKET WITH WALLET IN FUTURE VERSIONS
 }

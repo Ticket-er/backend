@@ -8,7 +8,6 @@ import { MailModule } from './mail/mail.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { EventService } from './event/event.service';
 import { EventModule } from './event/event.module';
-import { TicketController } from './ticket/ticket.controller';
 import { TicketService } from './ticket/ticket.service';
 import { TicketModule } from './ticket/ticket.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
@@ -38,7 +37,7 @@ import { WalletModule } from './wallet/wallet.module';
     HttpModule,
     WalletModule,
   ],
-  controllers: [AppController, TicketController],
+  controllers: [AppController],
   providers: [AppService, EventService, TicketService, PaymentService],
 })
 export class AppModule {}

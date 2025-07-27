@@ -5,7 +5,6 @@ import {
   Post,
   Req,
   UseGuards,
-  BadRequestException,
   Headers,
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
@@ -46,19 +45,6 @@ export class WalletController {
       required: ['amount'],
     },
   })
-  async fundWallet(
-    @Body() body: { amount: number },
-    @Req() req,
-    @Headers('x-client-page') clientPage: string,
-  ) {
-    const { amount } = body;
-    if (!amount || isNaN(amount)) {
-      throw new BadRequestException('Amount must be a valid number');
-    }
-
-    return this.walletService.addFunds(req.user.sub, amount, clientPage);
-  }
-
   @Post('withdraw')
   @ApiOperation({
     summary: 'Withdraw funds to bank account',

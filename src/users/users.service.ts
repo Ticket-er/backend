@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -10,6 +12,7 @@ import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
   constructor(
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
@@ -20,24 +23,37 @@ export class UserService {
     dto: UpdateUserDto,
     file?: Express.Multer.File,
   ) {
+    this.logger.log(`Updating user with ID: ${userId}`);
+
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) {
+      this.logger.warn(`User not found with ID: ${userId}`);
+      throw new NotFoundException('User not found');
+    }
 
     let hashedPassword: string | undefined;
     if (dto.password) {
       if (dto.password.length < 6) {
+        this.logger.warn(`Password too short for user ID: ${userId}`);
         throw new BadRequestException('Password must be at least 6 characters');
       }
       hashedPassword = await bcrypt.hash(dto.password, 10);
+      this.logger.log(`Password hashed for user ID: ${userId}`);
     }
 
     let uploadedImageUrl: string | undefined;
     if (file) {
-      const uploadResult = await this.cloudinary.uploadImage(
-        file,
-        'ticket-er/profiles',
-      );
-      uploadedImageUrl = uploadResult;
+      try {
+        const upload = await this.cloudinary.uploadImage(
+          file,
+          'ticket-er/profiles',
+        );
+        uploadedImageUrl = upload;
+        this.logger.log(`Image uploaded successfully: ${uploadedImageUrl}`);
+      } catch (err) {
+        this.logger.error(`Image upload failed: ${err.message}`);
+        throw new InternalServerErrorException('Failed to upload event banner');
+      }
     }
 
     const updatedUser = await this.prisma.user.update({
@@ -48,6 +64,8 @@ export class UserService {
         profileImage: uploadedImageUrl || user.profileImage,
       },
     });
+
+    this.logger.log(`User updated successfully: ${userId}`);
 
     return { message: 'Profile updated successfully', user: updatedUser };
   }
@@ -71,9 +89,24 @@ export class UserService {
       where: { userId: user.id },
     });
     if (!wallet) {
-      await this.prisma.wallet.create({
-        data: { userId: user.id, balance: 0 },
+      const rawPin = '0000';
+      let hashedPin: string | undefined = undefined;
+      if (rawPin) {
+        const salt = await bcrypt.genSalt(10);
+        hashedPin = await bcrypt.hash(rawPin, salt);
+      }
+
+      const wallet = await this.prisma.wallet.create({
+        data: {
+          userId: user.id,
+          pin: hashedPin,
+        },
       });
+
+      return {
+        message: 'Wallet created successfully',
+        walletId: wallet.id,
+      };
     }
 
     return { message: 'You are now an organizer!' };

@@ -115,7 +115,7 @@ async function main() {
           reference: `txn_evt${i + 1}_${j + 1}`,
           userId: buyer.id,
           eventId: event.id,
-          type: 'PRIMARY',
+          type: 'PURCHASE',
           amount: event.price,
           status: 'SUCCESS',
           tickets: {
