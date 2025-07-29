@@ -7,6 +7,7 @@ import {
 import { InitiateDto } from './dto/initiate.dto';
 import { HttpService } from '@nestjs/axios';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class PaymentService {
@@ -227,6 +228,7 @@ export class PaymentService {
             data: {
               userId: txn.userId,
               isListed: false,
+              code: await this.generateUniqueTicketCode(),
               resalePrice: null,
               resaleCount: { increment: 1 },
               resaleCommission: platformCut + organizerRoyalty,
@@ -285,5 +287,23 @@ export class PaymentService {
           'Could not verify transaction',
       );
     }
+  }
+
+  generateTicketCode(): string {
+    const randomPart = randomBytes(5).toString('hex').toUpperCase();
+    return `TCK-${randomPart}`;
+  }
+
+  async generateUniqueTicketCode(): Promise<string> {
+    let code: string;
+    let exists = true;
+
+    do {
+      code = this.generateTicketCode();
+      exists =
+        (await this.prisma.ticket.findUnique({ where: { code } })) !== null;
+    } while (exists);
+
+    return code;
   }
 }

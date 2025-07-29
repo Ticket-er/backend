@@ -9,7 +9,6 @@ import { BuyNewDto } from './dto/buy-new.dto';
 import { ListResaleDto } from './dto/list-resale.dto';
 import { PaymentService } from 'src/payment/payment.service';
 import { BuyResaleDto } from './dto/buy-resale.dto';
-import { randomBytes } from 'crypto';
 
 @Injectable()
 export class TicketService {
@@ -116,7 +115,7 @@ export class TicketService {
     try {
       this.logger.log(`Creating ${dto.quantity} ticket(s) for user ${userId}`);
       for (let i = 0; i < dto.quantity; i++) {
-        const code = `TCK-${randomBytes(3).toString('hex').toUpperCase()}`;
+        const code = await this.paymentService.generateUniqueTicketCode();
         const ticket = await this.prisma.ticket.create({
           data: {
             userId,

@@ -6,10 +6,12 @@ import {
   Req,
   UseGuards,
   Headers,
+  Patch,
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from 'src/auth/guards/jwt.guard';
+import { SetWalletPinDto } from './dto/set-wallet-pin.dto';
 
 @ApiTags('Wallet')
 @ApiBearerAuth()
@@ -30,21 +32,6 @@ export class WalletController {
     return this.walletService.getTransactions(req.user.sub);
   }
 
-  @Post('fund')
-  @ApiOperation({
-    summary: 'Add funds to wallet',
-    description:
-      'Used after successful payment (e.g., webhook or client call). Increments wallet balance.',
-  })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        amount: { type: 'number', example: 5000 },
-      },
-      required: ['amount'],
-    },
-  })
   @Post('withdraw')
   @ApiOperation({
     summary: 'Withdraw funds to bank account',
@@ -67,5 +54,19 @@ export class WalletController {
   })
   async withdraw(@Body() body, @Req() req) {
     return this.walletService.withdraw(req.user.sub, body);
+  }
+
+  @Patch('pin')
+  @UseGuards(JwtGuard)
+  async setWalletPin(@Req() req, @Body() dto: SetWalletPinDto) {
+    return this.walletService.setWalletPin(req.user.sub, dto);
+  }
+
+  @Get('pin-status')
+  @ApiOperation({
+    summary: 'Check if wallet PIN is set for authenticated user',
+  })
+  async hasWalletPin(@Req() req) {
+    return this.walletService.hasWalletPin(req.user.sub);
   }
 }

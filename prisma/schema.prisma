@@ -59,8 +59,8 @@ model Event {
   organizerId String
   createdAt   DateTime   @default(now())
 
-  primaryFeeBps     Int    @default(500)   // 5 % on first sale
-  resaleFeeBps      Int    @default(500)   // 5 % platform fee on resale
+  primaryFeeBps     Int    @default(350)   // 5 % on first sale
+  resaleFeeBps      Int    @default(350)   // 5 % platform fee on resale
   royaltyFeeBps     Int    @default(500)   // 5 % organizer royalty on resale
 
   tickets     Ticket[]

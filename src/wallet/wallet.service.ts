@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { PaymentService } from 'src/payment/payment.service';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -91,6 +92,58 @@ export class WalletService {
         message: 'Withdrawal initiated successfully',
         reference,
         payout: payoutResult,
+      };
+    });
+  }
+
+  async setWalletPin(
+    userId: string,
+    payload: { oldPin?: string; newPin: string },
+  ) {
+    const pinRegex = /^\d{4}$/;
+
+    if (!pinRegex.test(payload.newPin)) {
+      throw new BadRequestException('PIN must be exactly 4 digits');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const wallet = await tx.wallet.findUnique({ where: { userId } });
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      // If pin already exists, verify old pin
+      if (wallet.pin) {
+        if (!payload.oldPin) {
+          throw new BadRequestException(
+            'Old PIN is required to change your PIN',
+          );
+        }
+
+        const isMatch = await bcrypt.compare(payload.oldPin, wallet.pin);
+        if (!isMatch) {
+          throw new UnauthorizedException('Old PIN is incorrect');
+        }
+      }
+
+      // Set new PIN
+      const salt = await bcrypt.genSalt(10);
+      const hashedPin = await bcrypt.hash(payload.newPin, salt);
+
+      await tx.wallet.update({
+        where: { userId },
+        data: { pin: hashedPin },
+      });
+
+      return {
+        message: wallet.pin
+          ? 'Wallet PIN updated successfully'
+          : 'Wallet PIN set successfully',
       };
     });
   }
@@ -215,5 +268,18 @@ export class WalletService {
         event: t.ticket.event,
       })),
     }));
+  }
+
+  async hasWalletPin(userId: string): Promise<{ hasPin: boolean }> {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+      select: { pin: true },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    return { hasPin: !!wallet.pin };
   }
 }

@@ -1,4 +1,11 @@
-import { Controller, Post, Body, HttpCode } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -8,6 +15,8 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { JwtGuard } from './guards/jwt.guard';
 
 @ApiTags('Authentication')
 @Controller('v1/auth')
@@ -257,5 +266,46 @@ export class AuthController {
   })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @UseGuards(JwtGuard)
+  @Post('change-password')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 2, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Change password',
+    description: 'Allows a logged-in user to change their password.',
+  })
+  @ApiBody({
+    description: 'Current and new password data',
+    schema: {
+      type: 'object',
+      properties: {
+        currentPassword: {
+          type: 'string',
+          example: 'OldPass123!',
+          description: 'User current password',
+        },
+        newPassword: {
+          type: 'string',
+          example: 'NewPass456!',
+          description: 'User new password',
+        },
+      },
+      required: ['currentPassword', 'newPassword'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password changed successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Current password is incorrect or invalid request',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async changePassword(@Body() dto: ChangePasswordDto, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.authService.changePassword(userId, dto);
   }
 }

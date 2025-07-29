@@ -89,17 +89,9 @@ export class UserService {
       where: { userId: user.id },
     });
     if (!wallet) {
-      const rawPin = '0000';
-      let hashedPin: string | undefined = undefined;
-      if (rawPin) {
-        const salt = await bcrypt.genSalt(10);
-        hashedPin = await bcrypt.hash(rawPin, salt);
-      }
-
       const wallet = await this.prisma.wallet.create({
         data: {
           userId: user.id,
-          pin: hashedPin,
         },
       });
 
