@@ -8,6 +8,8 @@ import { InitiateDto } from './dto/initiate.dto';
 import { HttpService } from '@nestjs/axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { randomBytes } from 'crypto';
+import { MailService } from 'src/mail/mail.service';
+import { generateVerificationCode } from 'src/common/utils/qrCode.utils';
 
 @Injectable()
 export class PaymentService {
@@ -18,6 +20,7 @@ export class PaymentService {
   constructor(
     private httpService: HttpService,
     private prisma: PrismaService,
+    private mailService: MailService,
   ) {}
 
   async initiatePayment(data: InitiateDto): Promise<string> {
@@ -83,8 +86,13 @@ export class PaymentService {
         const txn = await tx.transaction.findUnique({
           where: { reference },
           include: {
-            event: true,
+            event: {
+              include: {
+                organizer: true,
+              },
+            },
             tickets: { include: { ticket: true } },
+            user: true,
           },
         });
 
@@ -176,6 +184,68 @@ export class PaymentService {
             update: { balance: { increment: platformCut } },
           });
         }
+
+        // Prepare tickets for buyer email with QR codes
+        const tickets = await this.prisma.ticket.findMany({
+          where: { id: { in: ticketIds } },
+        });
+
+        const ticketDetails = tickets.map((ticket) => {
+          if (!txn.eventId || !txn.userId || !ticket.code) {
+            throw new Error('Missing data for verification code generation');
+          }
+
+          return {
+            ticketId: ticket.id,
+            code: ticket.code,
+            qrData: {
+              ticketId: ticket.id,
+              eventId: txn.eventId,
+              userId: txn.userId,
+              code: ticket.code,
+              verificationCode: generateVerificationCode(
+                ticket.code,
+                txn.eventId,
+                txn.userId,
+              ),
+              timestamp: Date.now(),
+            },
+          };
+        });
+
+        // Send emails
+        try {
+          // Buyer email
+          await this.mailService.sendTicketPurchaseBuyerMail(
+            txn.user.email,
+            txn.user.name,
+            txn.event.name,
+            ticketDetails,
+          );
+
+          // Organizer email
+          await this.mailService.sendTicketPurchaseOrganizerMail(
+            txn.event.organizer.email,
+            txn.event.organizer.name,
+            txn.event.name,
+            ticketIds.length,
+            organizerProceeds,
+          );
+
+          // Admin email
+          if (platformAdmin) {
+            await this.mailService.sendTicketPurchaseAdminMail(
+              platformAdmin.email,
+              platformAdmin.name,
+              txn.event.name,
+              ticketIds.length,
+              platformCut,
+              txn.user.name,
+            );
+          }
+        } catch (err) {
+          this.logger.error(`Failed to send purchase emails`, err.stack);
+        }
       }
 
       // RESALE FLOW
@@ -188,7 +258,7 @@ export class PaymentService {
 
         const tickets = await this.prisma.ticket.findMany({
           where: { id: { in: ticketIds } },
-          include: { event: true },
+          include: { event: true, user: true },
         });
 
         if (tickets.length !== ticketIds.length) {
@@ -198,10 +268,12 @@ export class PaymentService {
         const event = tickets[0].event;
         if (!event) throw new NotFoundException('Event not found');
 
+        let totalPlatformCut = 0;
+        let totalOrganizerRoyalty = 0;
+        let totalSellerProceeds = 0;
+
         for (const ticket of tickets) {
-          const seller = await this.prisma.user.findUnique({
-            where: { id: ticket.userId },
-          });
+          const seller = ticket.user;
           if (!seller) throw new NotFoundException('Seller not found');
 
           if (
@@ -223,12 +295,17 @@ export class PaymentService {
           const sellerProceeds =
             ticket.resalePrice - (platformCut + organizerRoyalty);
 
+          totalPlatformCut += platformCut;
+          totalOrganizerRoyalty += organizerRoyalty;
+          totalSellerProceeds += sellerProceeds;
+
+          const newCode = await this.generateUniqueTicketCode();
           await this.prisma.ticket.update({
             where: { id: ticket.id },
             data: {
               userId: txn.userId,
               isListed: false,
-              code: await this.generateUniqueTicketCode(),
+              code: newCode,
               resalePrice: null,
               resaleCount: { increment: 1 },
               resaleCommission: platformCut + organizerRoyalty,
@@ -242,32 +319,107 @@ export class PaymentService {
             currency: 'NGN',
             destination: {
               account_number:
-                `${process.env.TEXT_BANK_ACCOUNT}` || ticket.accountNumber,
-              bank_code: `${process.env.TEXT_BANK_CODE}` || ticket.bankCode,
+                `${process.env.TEST_BANK_ACCOUNT}` || ticket.accountNumber,
+              bank_code: `${process.env.TEST_BANK_CODE}` || ticket.bankCode,
             },
             reference: `resale_payout_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             notification_url: `${process.env.NOTIFICATION_URL}`,
             narration: `Resale payout for ticket ${ticket.id}`,
             metadata: { userId: ticket.userId },
           });
-
-          await this.prisma.wallet.update({
-            where: { userId: event.organizerId },
-            data: { balance: { increment: organizerRoyalty } },
-          });
-
-          const platformAdmin = await this.prisma.user.findUnique({
-            where: { email: process.env.ADMIN_EMAIL },
-          });
-
-          if (platformAdmin) {
-            await this.prisma.wallet.upsert({
-              where: { userId: platformAdmin.id },
-              create: { userId: platformAdmin.id, balance: platformCut },
-              update: { balance: { increment: platformCut } },
-            });
-          }
         }
+
+        // Update wallets
+        await this.prisma.wallet.update({
+          where: { userId: event.organizerId },
+          data: { balance: { increment: totalOrganizerRoyalty } },
+        });
+
+        const platformAdmin = await this.prisma.user.findUnique({
+          where: { email: process.env.ADMIN_EMAIL },
+        });
+
+        if (platformAdmin) {
+          await this.prisma.wallet.upsert({
+            where: { userId: platformAdmin.id },
+            create: { userId: platformAdmin.id, balance: totalPlatformCut },
+            update: { balance: { increment: totalPlatformCut } },
+          });
+        }
+
+        // Prepare tickets for buyer email with QR codes
+        const ticketDetails = tickets.map((ticket) => ({
+          ticketId: ticket.id,
+          code: ticket.code,
+          qrData: {
+            ticketId: ticket.id,
+            eventId: event.id,
+            userId: txn.userId,
+            code: ticket.code,
+            verificationCode: generateVerificationCode(
+              ticket.code,
+              event.id,
+              txn.userId,
+            ),
+            timestamp: Date.now(),
+          },
+        }));
+
+        // Send emails
+        try {
+          // Buyer email
+          await this.mailService.sendTicketResaleBuyerMail(
+            txn.user.email,
+            txn.user.name,
+            event.name,
+            ticketDetails,
+          );
+
+          // Seller email (assuming all tickets belong to the same seller)
+          const seller = tickets[0].user;
+          await this.mailService.sendTicketResaleSellerMail(
+            seller.email,
+            seller.name,
+            event.name,
+            tickets.length,
+            totalSellerProceeds,
+          );
+
+          // Organizer email
+          const organizer = await this.prisma.user.findUnique({
+            where: { id: event.organizerId },
+          });
+          if (organizer) {
+            await this.mailService.sendTicketResaleOrganizerMail(
+              organizer.email,
+              organizer.name,
+              event.name,
+              tickets.length,
+              totalOrganizerRoyalty,
+            );
+          }
+
+          // Admin email
+          if (platformAdmin) {
+            await this.mailService.sendTicketResaleAdminMail(
+              platformAdmin.email,
+              platformAdmin.name,
+              event.name,
+              tickets.length,
+              totalPlatformCut,
+              txn.user.name,
+              seller.name,
+            );
+          }
+        } catch (err) {
+          this.logger.error(`Failed to send resale emails`, err.stack);
+          // Don't fail the transaction due to email error
+        }
+
+        return {
+          message: 'Transaction verified and processed successfully',
+          ticketIds,
+        };
       }
 
       return {

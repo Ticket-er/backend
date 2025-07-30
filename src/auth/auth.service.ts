@@ -46,6 +46,8 @@ export class AuthService {
         },
       });
 
+      await this.mailService.sendRegistrationMail(dto.email, dto.name);
+
       await this.mailService.sendOtp(dto.email, dto.name, otp);
       return {
         message: 'Account created. Check your email for verification OTP.',
@@ -71,6 +73,7 @@ export class AuthService {
       expiresIn: '2 days',
     });
 
+    await this.mailService.sendLoginMail(user.email, user.name ?? 'user');
     return { access_token: token, user };
   }
 
