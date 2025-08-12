@@ -22,6 +22,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { BuyResaleDto } from './dto/buy-resale.dto';
+import { RemoveResaleDto } from './dto/remove-resale.dto';
 
 @ApiTags('Tickets')
 @Controller('v1/tickets')
@@ -180,6 +181,41 @@ export class TicketController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   listForResale(@Body() dto: ListResaleDto, @Req() req) {
     return this.ticketService.listForResale(dto, req.user.sub);
+  }
+
+  @UseGuards(JwtGuard)
+  @Post('resale/remove')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Remove ticket from resale',
+    description:
+      'Removes a listed ticket from resale by the authenticated user.',
+  })
+  @ApiBody({ type: RemoveResaleDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Ticket removed from resale successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        resalePrice: { type: 'number', nullable: true },
+        listedAt: { type: 'string', format: 'date-time', nullable: true },
+        isListed: { type: 'boolean' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Ticket not found or not owned by user',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Ticket is not currently listed for resale',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  removeFromResale(@Body() dto: RemoveResaleDto, @Req() req) {
+    return this.ticketService.removeFromResale(dto, req.user.sub);
   }
 
   @Get('resell')

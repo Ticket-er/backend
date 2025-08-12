@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -62,6 +63,7 @@ export class EventService {
           organizerId: userId,
           location: dto.location || 'Not specified',
           date: dto.date,
+          category: dto.category,
           isActive: true,
           bannerUrl,
         },
@@ -98,18 +100,20 @@ export class EventService {
       bannerUrl = upload;
     }
 
-    const price = Number(dto.price);
-    const maxTickets = Number(dto.maxTickets);
+    const price = dto.price !== undefined ? Number(dto.price) : event.price;
+    const maxTickets =
+      dto.maxTickets !== undefined ? Number(dto.maxTickets) : event.maxTickets;
 
     return this.prisma.event.update({
       where: { id: eventId },
       data: {
         name: dto.name || event.name,
-        price: price ?? event.price,
+        price,
         description: dto.description ?? event.description,
-        maxTickets: maxTickets ?? event.maxTickets,
+        maxTickets,
         location: dto.location || event.location,
         date: dto.date || event.date,
+        category: dto.category || event.category, // ✅ update category
         bannerUrl,
       },
     });
@@ -125,6 +129,47 @@ export class EventService {
       where: { id },
       data: { isActive },
     });
+  }
+
+  async deleteEvent(id: string, userId: string) {
+    // Step 1: Fetch event
+    const event = await this.prisma.event.findUnique({ where: { id } });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Step 2: Check ownership
+    if (event.organizerId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    // Step 3: Check if any tickets have been bought
+    const ticketsCount = await this.prisma.ticket.count({
+      where: { eventId: id },
+    });
+
+    if (ticketsCount > 0) {
+      throw new BadRequestException(
+        'Event cannot be deleted because tickets have already been purchased',
+      );
+    }
+
+    // Step 4: Delete banner from Cloudinary (optional)
+    if (event.bannerUrl) {
+      try {
+        await this.cloudinary.deleteImage(event.bannerUrl);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to delete banner from Cloudinary: ${err.message}`,
+        );
+      }
+    }
+
+    // Step 5: Delete event
+    await this.prisma.event.delete({ where: { id } });
+
+    return { message: 'Event deleted successfully', eventId: id };
   }
 
   async getOrganizerEvents(userId: string) {
