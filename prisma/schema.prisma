@@ -52,6 +52,7 @@ model Event {
   location    String?
   category    EventCategory
   price       Int
+  slug        String     @unique
   maxTickets  Int
   minted      Int        @default(0)
   isActive    Boolean    @default(true)

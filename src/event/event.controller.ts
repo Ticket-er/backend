@@ -80,6 +80,12 @@ export class EventController {
     return this.eventService.getAllEvents();
   }
 
+  @Get('slug/:slug')
+  @ApiParam({ name: 'slug', type: String })
+  getEventBySlug(@Param('slug') slug: string) {
+    return this.eventService.getEventBySlug(slug);
+  }
+
   @Get(':id')
   @HttpCode(200)
   @ApiOperation({

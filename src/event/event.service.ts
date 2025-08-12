@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import slugify from 'slugify';
 
 @Injectable()
 export class EventService {
@@ -54,11 +55,22 @@ export class EventService {
       const price = Number(dto.price);
       const maxTickets = Number(dto.maxTickets);
 
+      // Generate base slug from name
+      const baseSlug = slugify(dto.name, { lower: true, strict: true });
+
+      // Check for duplicates & append random string if necessary
+      let slug = baseSlug;
+      const exists = await this.prisma.event.findUnique({ where: { slug } });
+      if (exists) {
+        slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
+      }
+
       const event = await this.prisma.event.create({
         data: {
           name: dto.name,
           price,
           maxTickets,
+          slug,
           description: dto.description || dto.name,
           organizerId: userId,
           location: dto.location || 'Not specified',
@@ -212,6 +224,16 @@ export class EventService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
+    return event;
+  }
+
+  async getEventBySlug(slug: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { slug },
+      include: { organizer: true, tickets: true },
+    });
+
+    if (!event) throw new NotFoundException('Event not found');
     return event;
   }
 
