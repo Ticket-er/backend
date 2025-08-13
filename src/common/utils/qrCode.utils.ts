@@ -16,7 +16,7 @@ export const generateTicketQR = async (
 ): Promise<string> => {
   try {
     // Use environment variable or fallback for the verification URL base
-    const baseUrl = process.env.APP_BASE_URL || 'https://ticket-er.com';
+    const baseUrl = process.env.APP_BASE_URL || 'https://ticketer.com';
     const verificationUrl = `${baseUrl}/verify-ticket?data=${encodeURIComponent(
       JSON.stringify(ticketData),
     )}`;

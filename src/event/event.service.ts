@@ -40,7 +40,7 @@ export class EventService {
       try {
         const upload = await this.cloudinary.uploadImage(
           file,
-          'ticket-er/events',
+          'ticketer/events',
         );
         bannerUrl = upload;
         this.logger.log(`Image uploaded successfully: ${bannerUrl}`);
@@ -105,10 +105,7 @@ export class EventService {
     let bannerUrl = event.bannerUrl;
 
     if (file) {
-      const upload = await this.cloudinary.uploadImage(
-        file,
-        'ticket-er/events',
-      );
+      const upload = await this.cloudinary.uploadImage(file, 'ticketer/events');
       bannerUrl = upload;
     }
 

@@ -15,6 +15,7 @@ import { PaymentService } from './payment/payment.service';
 import { PaymentModule } from './payment/payment.module';
 import { HttpModule } from '@nestjs/axios';
 import { WalletModule } from './wallet/wallet.module';
+import { MailService } from './mail/mail.service';
 
 @Module({
   imports: [
@@ -38,6 +39,12 @@ import { WalletModule } from './wallet/wallet.module';
     WalletModule,
   ],
   controllers: [AppController],
-  providers: [AppService, EventService, TicketService, PaymentService],
+  providers: [
+    AppService,
+    EventService,
+    TicketService,
+    PaymentService,
+    MailService,
+  ],
 })
 export class AppModule {}
