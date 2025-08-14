@@ -14,7 +14,7 @@ export class CloudinaryService {
 
   async uploadImage(
     file: Express.Multer.File,
-    folder = 'ticket-er',
+    folder = 'ticketer',
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
@@ -55,7 +55,7 @@ export class CloudinaryService {
       // Extract public_id from the image URL (including folder path)
       const parts = imageUrl.split('/');
       const publicId = parts
-        .slice(parts.indexOf('ticket-er')) // start from folder name
+        .slice(parts.indexOf('ticketer')) // start from folder name
         .join('/')
         .replace(/\.[^/.]+$/, ''); // remove extension
 

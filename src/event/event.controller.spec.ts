@@ -162,7 +162,7 @@ describe('EventController (e2e)', () => {
       });
       expect(mockCloudinaryService.uploadImage).toHaveBeenCalledWith(
         expect.any(Object),
-        'ticket-er/events',
+        'ticketer/events',
       );
       expect(mockPrismaService.event.create).toHaveBeenCalledWith({
         data: expect.objectContaining({

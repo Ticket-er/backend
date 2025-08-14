@@ -46,7 +46,7 @@ export class UserService {
       try {
         const upload = await this.cloudinary.uploadImage(
           file,
-          'ticket-er/profiles',
+          'ticketer/profiles',
         );
         uploadedImageUrl = upload;
         this.logger.log(`Image uploaded successfully: ${uploadedImageUrl}`);

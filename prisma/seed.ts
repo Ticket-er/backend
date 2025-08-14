@@ -66,6 +66,8 @@ async function main() {
       prisma.event.create({
         data: {
           name: `Music Festival ${i + 1}`,
+          category: 'MUSIC',
+          slug: `music-festival-${i + 1}`,
           price: 2000 + i * 1000,
           maxTickets: 50,
           description:

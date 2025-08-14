@@ -10,7 +10,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:3000', // Local development
-      'https://ticket-er.vercel.app', // Your deployed frontend
+      'https://ticketer.vercel.app', // Your deployed frontend
     ],
     credentials: true, // Allow sending cookies/headers with requests
   });
@@ -25,15 +25,15 @@ async function bootstrap() {
   );
 
   const config = new DocumentBuilder()
-    .setTitle('Ticket-er API')
-    .setDescription('API docs for Ticket-er platform')
+    .setTitle('Ticketer API')
+    .setDescription('API docs for Ticketer platform')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document, {
-    customSiteTitle: 'Ticket-er API Docs',
+    customSiteTitle: 'Ticketer API Docs',
     customfavIcon: 'https://avatars.githubusercontent.com/u/6936373?s=200&v=4',
     customJs: [
       'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui-bundle.min.js',
