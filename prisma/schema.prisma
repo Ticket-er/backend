@@ -50,7 +50,9 @@ model Event {
   bannerUrl   String?
   description String?
   location    String?
+  category    EventCategory
   price       Int
+  slug        String     @unique
   maxTickets  Int
   minted      Int        @default(0)
   isActive    Boolean    @default(true)
@@ -66,6 +68,24 @@ model Event {
   tickets     Ticket[]
   transactions Transaction[] // all purchase/resale txns for this event
 }
+
+enum EventCategory {
+  MUSIC
+  CONCERT
+  CONFERENCE
+  WORKSHOP
+  SPORTS
+  COMEDY
+  THEATRE
+  FESTIVAL
+  EXHIBITION
+  RELIGION
+  NETWORKING
+  TECH
+  FASHION
+  PARTY
+}
+
 
 model Ticket {
   id               String     @id @default(cuid())

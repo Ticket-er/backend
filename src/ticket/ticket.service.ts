@@ -9,6 +9,7 @@ import { BuyNewDto } from './dto/buy-new.dto';
 import { ListResaleDto } from './dto/list-resale.dto';
 import { PaymentService } from 'src/payment/payment.service';
 import { BuyResaleDto } from './dto/buy-resale.dto';
+import { RemoveResaleDto } from './dto/remove-resale.dto';
 
 @Injectable()
 export class TicketService {
@@ -433,6 +434,63 @@ export class TicketService {
       } catch (error) {
         console.error('[List Resale Ticket Error]', error);
         throw new BadRequestException('Failed to list ticket for resale');
+      }
+
+      // Step 4: Return updated ticket
+      return tx.ticket.findUnique({ where: { id: ticketId } });
+    });
+  }
+
+  async removeFromResale(dto: RemoveResaleDto, userId: string) {
+    const { ticketId } = dto;
+
+    return this.prisma.$transaction(async (tx) => {
+      // Step 1: Fetch ticket
+      const ticket = await tx.ticket.findFirst({
+        where: {
+          id: ticketId,
+          userId,
+        },
+        include: { event: true },
+      });
+
+      if (!ticket) {
+        throw new NotFoundException('Ticket not found or not owned by user');
+      }
+
+      // Step 2: Check if ticket is currently listed
+      if (!ticket.isListed) {
+        throw new BadRequestException(
+          `Ticket ${ticket.id} is not listed for resale`,
+        );
+      }
+
+      // Optional: Check event validity (you may skip if not necessary)
+      if (
+        !ticket.event ||
+        !ticket.event.isActive ||
+        ticket.event.date < new Date()
+      ) {
+        throw new BadRequestException(
+          `Event is not active or has already passed`,
+        );
+      }
+
+      // Step 3: Update ticket to remove from resale
+      try {
+        await tx.ticket.update({
+          where: { id: ticketId },
+          data: {
+            isListed: false,
+            resalePrice: null,
+            listedAt: null,
+            bankCode: null,
+            accountNumber: null,
+          },
+        });
+      } catch (error) {
+        console.error('[Remove Resale Ticket Error]', error);
+        throw new BadRequestException('Failed to remove ticket from resale');
       }
 
       // Step 4: Return updated ticket

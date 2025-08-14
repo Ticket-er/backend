@@ -1,3 +1,4 @@
+import { EventCategory } from '@prisma/client';
 import {
   IsString,
   IsNumber,
@@ -5,6 +6,7 @@ import {
   Min,
   MaxLength,
   IsDate,
+  IsEnum,
 } from 'class-validator';
 
 export class CreateEventDto {
@@ -31,6 +33,9 @@ export class CreateEventDto {
     message: 'Event description cannot be longer than 500 characters',
   })
   description?: string;
+
+  @IsEnum(EventCategory, { message: 'Invalid category' })
+  category: EventCategory;
 
   @IsDate({ message: 'Date must be valid' })
   date: Date;

@@ -1,0 +1,7 @@
+-- CreateEnum
+CREATE TYPE "EventCategory" AS ENUM ('MUSIC', 'CONCERT', 'CONFERENCE', 'WORKSHOP', 'SPORTS', 'COMEDY', 'THEATRE', 'FESTIVAL', 'EXHIBITION', 'RELIGION', 'NETWORKING', 'TECH', 'FASHION');
+
+-- AlterTable
+ALTER TABLE "Event" ADD COLUMN     "category" "EventCategory",
+ALTER COLUMN "primaryFeeBps" SET DEFAULT 350,
+ALTER COLUMN "resaleFeeBps" SET DEFAULT 350;

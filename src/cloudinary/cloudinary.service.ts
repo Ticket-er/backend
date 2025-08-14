@@ -49,4 +49,21 @@ export class CloudinaryService {
       stream.pipe(uploadStream);
     });
   }
+
+  async deleteImage(imageUrl: string): Promise<void> {
+    try {
+      // Extract public_id from the image URL (including folder path)
+      const parts = imageUrl.split('/');
+      const publicId = parts
+        .slice(parts.indexOf('ticket-er')) // start from folder name
+        .join('/')
+        .replace(/\.[^/.]+$/, ''); // remove extension
+
+      await cloudinary.uploader.destroy(publicId);
+    } catch (error) {
+      throw new InternalServerErrorException(
+        `Cloudinary deletion failed: ${error.message}`,
+      );
+    }
+  }
 }

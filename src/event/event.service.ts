@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -9,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import slugify from 'slugify';
 
 @Injectable()
 export class EventService {
@@ -53,15 +55,27 @@ export class EventService {
       const price = Number(dto.price);
       const maxTickets = Number(dto.maxTickets);
 
+      // Generate base slug from name
+      const baseSlug = slugify(dto.name, { lower: true, strict: true });
+
+      // Check for duplicates & append random string if necessary
+      let slug = baseSlug;
+      const exists = await this.prisma.event.findUnique({ where: { slug } });
+      if (exists) {
+        slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
+      }
+
       const event = await this.prisma.event.create({
         data: {
           name: dto.name,
           price,
           maxTickets,
+          slug,
           description: dto.description || dto.name,
           organizerId: userId,
           location: dto.location || 'Not specified',
           date: dto.date,
+          category: dto.category,
           isActive: true,
           bannerUrl,
         },
@@ -98,18 +112,20 @@ export class EventService {
       bannerUrl = upload;
     }
 
-    const price = Number(dto.price);
-    const maxTickets = Number(dto.maxTickets);
+    const price = dto.price !== undefined ? Number(dto.price) : event.price;
+    const maxTickets =
+      dto.maxTickets !== undefined ? Number(dto.maxTickets) : event.maxTickets;
 
     return this.prisma.event.update({
       where: { id: eventId },
       data: {
         name: dto.name || event.name,
-        price: price ?? event.price,
+        price,
         description: dto.description ?? event.description,
-        maxTickets: maxTickets ?? event.maxTickets,
+        maxTickets,
         location: dto.location || event.location,
         date: dto.date || event.date,
+        category: dto.category || event.category, // ✅ update category
         bannerUrl,
       },
     });
@@ -125,6 +141,47 @@ export class EventService {
       where: { id },
       data: { isActive },
     });
+  }
+
+  async deleteEvent(id: string, userId: string) {
+    // Step 1: Fetch event
+    const event = await this.prisma.event.findUnique({ where: { id } });
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Step 2: Check ownership
+    if (event.organizerId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    // Step 3: Check if any tickets have been bought
+    const ticketsCount = await this.prisma.ticket.count({
+      where: { eventId: id },
+    });
+
+    if (ticketsCount > 0) {
+      throw new BadRequestException(
+        'Event cannot be deleted because tickets have already been purchased',
+      );
+    }
+
+    // Step 4: Delete banner from Cloudinary (optional)
+    if (event.bannerUrl) {
+      try {
+        await this.cloudinary.deleteImage(event.bannerUrl);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to delete banner from Cloudinary: ${err.message}`,
+        );
+      }
+    }
+
+    // Step 5: Delete event
+    await this.prisma.event.delete({ where: { id } });
+
+    return { message: 'Event deleted successfully', eventId: id };
   }
 
   async getOrganizerEvents(userId: string) {
@@ -167,6 +224,16 @@ export class EventService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
+    return event;
+  }
+
+  async getEventBySlug(slug: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { slug },
+      include: { organizer: true, tickets: true },
+    });
+
+    if (!event) throw new NotFoundException('Event not found');
     return event;
   }
 

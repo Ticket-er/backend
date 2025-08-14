@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   UploadedFile,
   HttpCode,
+  Delete,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { EventService } from './event.service';
@@ -79,6 +80,12 @@ export class EventController {
     return this.eventService.getAllEvents();
   }
 
+  @Get('slug/:slug')
+  @ApiParam({ name: 'slug', type: String })
+  getEventBySlug(@Param('slug') slug: string) {
+    return this.eventService.getEventBySlug(slug);
+  }
+
   @Get(':id')
   @HttpCode(200)
   @ApiOperation({
@@ -129,6 +136,10 @@ export class EventController {
           type: 'string',
           description: 'Lekki Conservation Centre, Lagos',
         },
+        category: {
+          type: 'string',
+          description: 'MUSIC',
+        },
         maxTickets: { type: 'number', example: 100 },
         date: {
           type: 'string',
@@ -145,6 +156,7 @@ export class EventController {
         'date',
         'description',
         'location',
+        'çategory',
       ],
     },
   })
@@ -274,6 +286,10 @@ export class EventController {
           type: 'string',
           description: 'Lekki Conservation Centre, Lagos',
         },
+        category: {
+          type: 'string',
+          description: 'MUSIC',
+        },
         maxTickets: { type: 'number', example: 200 },
         date: {
           type: 'string',
@@ -302,6 +318,35 @@ export class EventController {
     @Req() req,
   ) {
     return this.eventService.updateEvent(id, dto, req.user.sub, file);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Delete(':id')
+  @Roles(Role.ORGANIZER)
+  @ApiOperation({
+    summary: 'Delete an event',
+    description:
+      'Deletes an event by ID if no tickets have been purchased for it. Only accessible to the authenticated organizer.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'UUID of the event to delete',
+    type: String,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Event deleted successfully',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden: User is not the organizer or tickets have already been purchased for the event',
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
+  delete(@Param('id', ParseUUIDPipe) id: string, @Req() req) {
+    return this.eventService.deleteEvent(id, req.user.sub);
   }
 
   @UseGuards(JwtGuard, RolesGuard)

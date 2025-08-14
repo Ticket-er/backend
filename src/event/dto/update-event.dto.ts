@@ -1,3 +1,4 @@
+import { EventCategory } from '@prisma/client';
 import {
   IsString,
   IsNumber,
@@ -6,6 +7,7 @@ import {
   MaxLength,
   Min,
   IsDate,
+  IsEnum,
 } from 'class-validator';
 
 export class UpdateEventDto {
@@ -33,6 +35,9 @@ export class UpdateEventDto {
   @IsOptional()
   @IsString({ message: 'Location must be a string' })
   location: string;
+
+  @IsEnum(EventCategory, { message: 'Invalid category' })
+  category: EventCategory;
 
   @IsDate({ message: 'Date must be valid' })
   date: Date;
