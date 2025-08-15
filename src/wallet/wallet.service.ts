@@ -16,14 +16,53 @@ export class WalletService {
     private readonly paymentService: PaymentService,
   ) {}
 
+  // ----------------------
+  // Helper Methods
+  // ----------------------
+
+  private async validateWallet(userId: string) {
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw new NotFoundException('Wallet not found');
+    return wallet;
+  }
+
+  private async validateOrganizer(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { wallet: true, events: true },
+    });
+    if (!user) throw new NotFoundException('Organizer not found');
+    if (!user.wallet) throw new NotFoundException('Organizer wallet not found');
+    if (!['ORGANIZER', 'ADMIN', 'SUPERADMIN'].includes(user.role)) {
+      throw new ForbiddenException('User is not an organizer');
+    }
+    return user;
+  }
+
+  private async hashPin(pin: string) {
+    const salt = await bcrypt.genSalt(10);
+    return bcrypt.hash(pin, salt);
+  }
+
+  private async comparePin(plain: string, hashed: string) {
+    const valid = await bcrypt.compare(plain, hashed);
+    return valid;
+  }
+
+  private generateWithdrawalReference() {
+    return `withdraw_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  }
+
+  // ----------------------
+  // Public Methods
+  // ----------------------
+
   async checkBalance(userId: string) {
     const wallet = await this.prisma.wallet.findUnique({
       where: { userId },
       select: { balance: true },
     });
-
     if (!wallet) throw new NotFoundException('Wallet not found');
-
     return { balance: wallet.balance };
   }
 
@@ -41,35 +80,31 @@ export class WalletService {
   ) {
     await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
-      if (user?.role === 'USER')
+      if (user?.role === 'USER') {
         throw new BadRequestException(
           'Users cannot withdraw funds...buy a ticket instead',
         );
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
-      if (!wallet) throw new NotFoundException('Wallet not found');
+      }
+
+      const wallet = await this.validateWallet(userId);
+
       if (!wallet.pin) {
         throw new BadRequestException(
           'PIN not set. Please set your wallet PIN before withdrawing.',
         );
       }
 
-      const isPinValid = await bcrypt.compare(payload.pin, wallet.pin);
-      if (!isPinValid) {
-        throw new BadRequestException('Invalid PIN provided.');
-      }
+      const isPinValid = await this.comparePin(payload.pin, wallet.pin);
+      if (!isPinValid) throw new BadRequestException('Invalid PIN provided.');
 
       if (wallet.balance.lt(payload.amount)) {
         throw new BadRequestException('Insufficient wallet balance');
       }
 
-      const reference = `withdraw_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const reference = this.generateWithdrawalReference();
 
-      // Call the payment service to hit the aggregator
       const payoutResult = await this.paymentService.initiateWithdrawal({
-        customer: {
-          email: payload.email,
-          name: payload.name,
-        },
+        customer: { email: payload.email, name: payload.name },
         amount: payload.amount,
         currency: 'NGN',
         destination: {
@@ -82,7 +117,6 @@ export class WalletService {
         metadata: { userId },
       });
 
-      // Deduct funds after aggregator call success
       await tx.wallet.update({
         where: { userId },
         data: { balance: { decrement: payload.amount } },
@@ -101,23 +135,17 @@ export class WalletService {
     payload: { oldPin?: string; newPin: string },
   ) {
     const pinRegex = /^\d{4}$/;
-
     if (!pinRegex.test(payload.newPin)) {
       throw new BadRequestException('PIN must be exactly 4 digits');
     }
 
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+      if (!user) throw new NotFoundException('User not found');
 
       const wallet = await tx.wallet.findUnique({ where: { userId } });
-      if (!wallet) {
-        throw new NotFoundException('Wallet not found');
-      }
+      if (!wallet) throw new NotFoundException('Wallet not found');
 
-      // If pin already exists, verify old pin
       if (wallet.pin) {
         if (!payload.oldPin) {
           throw new BadRequestException(
@@ -125,15 +153,11 @@ export class WalletService {
           );
         }
 
-        const isMatch = await bcrypt.compare(payload.oldPin, wallet.pin);
-        if (!isMatch) {
-          throw new UnauthorizedException('Old PIN is incorrect');
-        }
+        const isMatch = await this.comparePin(payload.oldPin, wallet.pin);
+        if (!isMatch) throw new UnauthorizedException('Old PIN is incorrect');
       }
 
-      // Set new PIN
-      const salt = await bcrypt.genSalt(10);
-      const hashedPin = await bcrypt.hash(payload.newPin, salt);
+      const hashedPin = await this.hashPin(payload.newPin);
 
       await tx.wallet.update({
         where: { userId },
@@ -149,60 +173,22 @@ export class WalletService {
   }
 
   async getTransactions(organizerId: string) {
-    // Verify organizer exists and get their wallet
-    const user = await this.prisma.user.findUnique({
-      where: { id: organizerId },
-      include: {
-        wallet: true,
-        events: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
+    const user = await this.validateOrganizer(organizerId);
 
-    if (!user) {
-      throw new NotFoundException('Organizer not found');
-    }
-
-    if (!user.wallet) {
-      throw new NotFoundException('Organizer wallet not found');
-    }
-
-    if (
-      user.role !== 'ORGANIZER' &&
-      user.role !== 'ADMIN' &&
-      user.role !== 'SUPERADMIN'
-    ) {
-      throw new ForbiddenException('User is not an organizer');
-    }
-
-    // Get event IDs for events created by this organizer
     const eventIds = user.events.map((event) => event.id);
 
-    // Fetch transactions related to the organizer's events (purchases and resales)
     const transactions = await this.prisma.transaction.findMany({
       where: {
         OR: [
-          // Transactions for events organized by this user (purchases or resales)
           {
-            eventId: {
-              in: eventIds,
-            },
-            type: {
-              in: ['PURCHASE', 'RESALE'],
-            },
+            eventId: { in: eventIds },
+            type: { in: ['PURCHASE', 'RESALE'] },
             status: 'SUCCESS',
           },
-          // Withdrawals from the organizer's wallet
           {
             userId: organizerId,
             type: 'WITHDRAW',
-            status: {
-              in: ['SUCCESS', 'FAILED'],
-            },
+            status: { in: ['SUCCESS', 'FAILED'] },
           },
         ],
       },
@@ -213,43 +199,23 @@ export class WalletService {
         type: true,
         status: true,
         createdAt: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        event: {
-          select: {
-            id: true,
-            name: true,
-            resaleFeeBps: true, // Include resaleFeeBps for calculating platform fee
-          },
-        },
+        user: { select: { id: true, name: true, email: true } },
+        event: { select: { id: true, name: true, resaleFeeBps: true } },
         tickets: {
           select: {
             ticket: {
               select: {
                 id: true,
                 code: true,
-                event: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
+                event: { select: { id: true, name: true } },
               },
             },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // Map transactions to a clean response format
     return transactions.map((tx) => ({
       id: tx.id,
       reference: tx.reference,
@@ -257,11 +223,11 @@ export class WalletService {
       amount:
         tx.type === 'RESALE'
           ? Math.round((tx.amount * (tx.event?.resaleFeeBps ?? 500)) / 10000)
-          : tx.amount, // 5% for RESALE, full amount otherwise
+          : tx.amount,
       status: tx.status,
       createdAt: tx.createdAt,
-      buyer: tx.type !== 'WITHDRAW' ? tx.user : null, // Buyer info for purchases/resales, null for withdrawals
-      event: tx.event ?? null, // Event info for purchases/resales, null for withdrawals
+      buyer: tx.type !== 'WITHDRAW' ? tx.user : null,
+      event: tx.event ?? null,
       tickets: tx.tickets.map((t) => ({
         id: t.ticket.id,
         code: t.ticket.code,
@@ -275,11 +241,7 @@ export class WalletService {
       where: { userId },
       select: { pin: true },
     });
-
-    if (!wallet) {
-      throw new NotFoundException('Wallet not found');
-    }
-
+    if (!wallet) throw new NotFoundException('Wallet not found');
     return { hasPin: !!wallet.pin };
   }
 }

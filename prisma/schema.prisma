@@ -63,7 +63,7 @@ model Event {
 
   primaryFeeBps     Int    @default(350)   // 5 % on first sale
   resaleFeeBps      Int    @default(350)   // 5 % platform fee on resale
-  royaltyFeeBps     Int    @default(500)   // 5 % organizer royalty on resale
+  royaltyFeeBps     Int    @default(1000)   // 5 % organizer royalty on resale
 
   tickets     Ticket[]
   transactions Transaction[] // all purchase/resale txns for this event

@@ -13,10 +13,73 @@ import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
+
   constructor(
-    private prisma: PrismaService,
-    private cloudinary: CloudinaryService,
+    private readonly prisma: PrismaService,
+    private readonly cloudinary: CloudinaryService,
   ) {}
+
+  // =====================
+  // HELPER METHODS
+  // =====================
+
+  private async findUserById(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      this.logger.warn(`User not found with ID: ${userId}`);
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  private async findUserByEmail(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  private async handlePasswordUpdate(password: string, userId: string) {
+    if (password.length < 6) {
+      this.logger.warn(`Password too short for user ID: ${userId}`);
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
+    const hashed = await bcrypt.hash(password, 10);
+    this.logger.log(`Password hashed for user ID: ${userId}`);
+    return hashed;
+  }
+
+  private async handleImageUpload(file: Express.Multer.File) {
+    try {
+      const uploadedImageUrl = await this.cloudinary.uploadImage(
+        file,
+        'ticketer/profiles',
+      );
+      this.logger.log(`Image uploaded successfully: ${uploadedImageUrl}`);
+      return uploadedImageUrl;
+    } catch (err) {
+      this.logger.error(`Image upload failed: ${err.message}`);
+      throw new InternalServerErrorException('Failed to upload event banner');
+    }
+  }
+
+  private async promoteToOrganizer(userId: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: 'ORGANIZER' },
+    });
+  }
+
+  private async ensureWalletExists(userId: string) {
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      return await this.prisma.wallet.create({ data: { userId } });
+    }
+    return null;
+  }
+
+  // =====================
+  // PUBLIC METHODS
+  // =====================
 
   async updateUser(
     userId: string,
@@ -25,43 +88,22 @@ export class UserService {
   ) {
     this.logger.log(`Updating user with ID: ${userId}`);
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      this.logger.warn(`User not found with ID: ${userId}`);
-      throw new NotFoundException('User not found');
-    }
+    const user = await this.findUserById(userId);
 
-    let hashedPassword: string | undefined;
-    if (dto.password) {
-      if (dto.password.length < 6) {
-        this.logger.warn(`Password too short for user ID: ${userId}`);
-        throw new BadRequestException('Password must be at least 6 characters');
-      }
-      hashedPassword = await bcrypt.hash(dto.password, 10);
-      this.logger.log(`Password hashed for user ID: ${userId}`);
-    }
+    const hashedPassword = dto.password
+      ? await this.handlePasswordUpdate(dto.password, userId)
+      : undefined;
 
-    let uploadedImageUrl: string | undefined;
-    if (file) {
-      try {
-        const upload = await this.cloudinary.uploadImage(
-          file,
-          'ticketer/profiles',
-        );
-        uploadedImageUrl = upload;
-        this.logger.log(`Image uploaded successfully: ${uploadedImageUrl}`);
-      } catch (err) {
-        this.logger.error(`Image upload failed: ${err.message}`);
-        throw new InternalServerErrorException('Failed to upload event banner');
-      }
-    }
+    const uploadedImageUrl = file
+      ? await this.handleImageUpload(file)
+      : undefined;
 
     const updatedUser = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        name: dto.name || user.name,
-        password: hashedPassword || user.password,
-        profileImage: uploadedImageUrl || user.profileImage,
+        name: dto.name ?? user.name,
+        password: hashedPassword ?? user.password,
+        profileImage: uploadedImageUrl ?? user.profileImage,
       },
     });
 
@@ -71,34 +113,18 @@ export class UserService {
   }
 
   async becomeOrganizer(email: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findUserByEmail(email);
 
-    if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ORGANIZER') {
       throw new BadRequestException('User is already an organizer');
     }
 
-    // Update role
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { role: 'ORGANIZER' },
-    });
+    await this.promoteToOrganizer(user.id);
 
-    // Ensure wallet exists
-    const wallet = await this.prisma.wallet.findUnique({
-      where: { userId: user.id },
-    });
-    if (!wallet) {
-      const wallet = await this.prisma.wallet.create({
-        data: {
-          userId: user.id,
-        },
-      });
+    const wallet = await this.ensureWalletExists(user.id);
 
-      return {
-        message: 'Wallet created successfully',
-        walletId: wallet.id,
-      };
+    if (wallet) {
+      return { message: 'Wallet created successfully', walletId: wallet.id };
     }
 
     return { message: 'You are now an organizer!' };
