@@ -20,6 +20,73 @@ export class EventService {
     private cloudinary: CloudinaryService,
   ) {}
 
+  // Private Helpers
+  private async findEventById(eventId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+    return event;
+  }
+
+  private async findEventBySlug(slug: string) {
+    const event = await this.prisma.event.findUnique({ where: { slug } });
+    if (!event) throw new NotFoundException('Event not found');
+    return event;
+  }
+
+  private validateOwnership(event: any, userId: string) {
+    if (event.organizerId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+  }
+
+  private async uploadBannerIfProvided(
+    file?: Express.Multer.File,
+  ): Promise<string | undefined> {
+    if (!file) return undefined;
+    this.logger.log(`Uploading file: ${file.originalname}`);
+    try {
+      const upload = await this.cloudinary.uploadImage(file, 'ticketer/events');
+      this.logger.log(`Image uploaded successfully: ${upload}`);
+      return upload;
+    } catch (err) {
+      this.logger.error(`Image upload failed: ${err.message}`);
+      throw new InternalServerErrorException('Failed to upload event banner');
+    }
+  }
+
+  private async generateUniqueSlug(name: string): Promise<string> {
+    const baseSlug = slugify(name, { lower: true, strict: true });
+    let slug = baseSlug;
+    const exists = await this.prisma.event.findUnique({ where: { slug } });
+    if (exists) {
+      slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
+    }
+    return slug;
+  }
+
+  private async deleteBannerIfExists(bannerUrl?: string) {
+    if (!bannerUrl) return;
+    try {
+      await this.cloudinary.deleteImage(bannerUrl);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to delete banner from Cloudinary: ${err.message}`,
+      );
+    }
+  }
+
+  private async checkIfTicketsExist(eventId: string): Promise<void> {
+    const ticketsCount = await this.prisma.ticket.count({ where: { eventId } });
+    if (ticketsCount > 0) {
+      throw new BadRequestException(
+        'Event cannot be deleted because tickets have already been purchased',
+      );
+    }
+  }
+
+  // Creation and Updates
   async createEvent(
     dto: CreateEventDto,
     userId: string,
@@ -33,37 +100,12 @@ export class EventService {
       this.logger.warn('No file provided');
     }
 
-    let bannerUrl: string | undefined;
+    const bannerUrl = await this.uploadBannerIfProvided(file);
+    const slug = await this.generateUniqueSlug(dto.name);
 
-    // Step 1: Handle Image Upload
-    if (file) {
-      try {
-        const upload = await this.cloudinary.uploadImage(
-          file,
-          'ticketer/events',
-        );
-        bannerUrl = upload;
-        this.logger.log(`Image uploaded successfully: ${bannerUrl}`);
-      } catch (err) {
-        this.logger.error(`Image upload failed: ${err.message}`);
-        throw new InternalServerErrorException('Failed to upload event banner');
-      }
-    }
-
-    // Step 2: Save Event to DB
     try {
       const price = Number(dto.price);
       const maxTickets = Number(dto.maxTickets);
-
-      // Generate base slug from name
-      const baseSlug = slugify(dto.name, { lower: true, strict: true });
-
-      // Check for duplicates & append random string if necessary
-      let slug = baseSlug;
-      const exists = await this.prisma.event.findUnique({ where: { slug } });
-      if (exists) {
-        slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
-      }
 
       const event = await this.prisma.event.create({
         data: {
@@ -95,18 +137,15 @@ export class EventService {
     userId: string,
     file?: Express.Multer.File,
   ) {
-    const event = await this.prisma.event.findUnique({
-      where: { id: eventId },
-    });
-    if (!event) throw new NotFoundException('Event not found');
-    if (event.organizerId !== userId)
-      throw new ForbiddenException('Access denied');
+    const event = await this.findEventById(eventId);
+    this.validateOwnership(event, userId);
 
-    let bannerUrl = event.bannerUrl;
+    let bannerUrl: string | undefined;
 
     if (file) {
-      const upload = await this.cloudinary.uploadImage(file, 'ticketer/events');
-      bannerUrl = upload;
+      bannerUrl = await this.uploadBannerIfProvided(file);
+    } else if (event.bannerUrl) {
+      bannerUrl = event.bannerUrl;
     }
 
     const price = dto.price !== undefined ? Number(dto.price) : event.price;
@@ -122,17 +161,16 @@ export class EventService {
         maxTickets,
         location: dto.location || event.location,
         date: dto.date || event.date,
-        category: dto.category || event.category, // ✅ update category
+        category: dto.category || event.category,
         bannerUrl,
       },
     });
   }
 
+  // Status Management
   async toggleEventStatus(id: string, isActive: boolean, userId: string) {
-    const event = await this.prisma.event.findUnique({ where: { id } });
-    if (!event) throw new NotFoundException('Event not found');
-    if (event.organizerId !== userId)
-      throw new ForbiddenException('Access denied');
+    const event = await this.findEventById(id);
+    this.validateOwnership(event, userId);
 
     return this.prisma.event.update({
       where: { id },
@@ -140,47 +178,19 @@ export class EventService {
     });
   }
 
+  // Deletion
   async deleteEvent(id: string, userId: string) {
-    // Step 1: Fetch event
-    const event = await this.prisma.event.findUnique({ where: { id } });
+    const event = await this.findEventById(id);
+    this.validateOwnership(event, userId);
+    await this.checkIfTicketsExist(id);
+    await this.deleteBannerIfExists(event.bannerUrl!);
 
-    if (!event) {
-      throw new NotFoundException('Event not found');
-    }
-
-    // Step 2: Check ownership
-    if (event.organizerId !== userId) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    // Step 3: Check if any tickets have been bought
-    const ticketsCount = await this.prisma.ticket.count({
-      where: { eventId: id },
-    });
-
-    if (ticketsCount > 0) {
-      throw new BadRequestException(
-        'Event cannot be deleted because tickets have already been purchased',
-      );
-    }
-
-    // Step 4: Delete banner from Cloudinary (optional)
-    if (event.bannerUrl) {
-      try {
-        await this.cloudinary.deleteImage(event.bannerUrl);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to delete banner from Cloudinary: ${err.message}`,
-        );
-      }
-    }
-
-    // Step 5: Delete event
     await this.prisma.event.delete({ where: { id } });
 
     return { message: 'Event deleted successfully', eventId: id };
   }
 
+  // Queries
   async getOrganizerEvents(userId: string) {
     const events = await this.prisma.event.findMany({
       where: { organizerId: userId },
@@ -194,7 +204,7 @@ export class EventService {
     return events;
   }
 
-  async getSingleEvent(eventId) {
+  async getSingleEvent(eventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
@@ -225,13 +235,7 @@ export class EventService {
   }
 
   async getEventBySlug(slug: string) {
-    const event = await this.prisma.event.findUnique({
-      where: { slug },
-      include: { organizer: true, tickets: true },
-    });
-
-    if (!event) throw new NotFoundException('Event not found');
-    return event;
+    return this.findEventBySlug(slug);
   }
 
   async getAllEvents() {
@@ -252,7 +256,7 @@ export class EventService {
                 id: true,
                 name: true,
                 email: true,
-                profileImage: true, // optional if you use it
+                profileImage: true,
               },
             },
           },
@@ -267,9 +271,7 @@ export class EventService {
     from?: string;
     to?: string;
   }) {
-    const filters: any = {
-      isActive: true,
-    };
+    const filters: any = { isActive: true };
 
     if (query.name) {
       filters.name = { contains: query.name, mode: 'insensitive' };
@@ -281,16 +283,15 @@ export class EventService {
       if (query.to) filters.createdAt.lte = new Date(query.to);
     }
 
-    const events = await this.prisma.event.findMany({
+    return this.prisma.event.findMany({
       where: filters,
       orderBy: { createdAt: 'desc' },
       include: {
         organizer: { select: { name: true, email: true } },
       },
     });
-
-    return events;
   }
+
   async getUserEvents(userId: string) {
     const tickets = await this.prisma.ticket.findMany({
       where: { userId },

@@ -5,11 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { PaymentService } from 'src/payment/payment.service';
 import { BuyNewDto } from './dto/buy-new.dto';
 import { ListResaleDto } from './dto/list-resale.dto';
-import { PaymentService } from 'src/payment/payment.service';
 import { BuyResaleDto } from './dto/buy-resale.dto';
 import { RemoveResaleDto } from './dto/remove-resale.dto';
+import { TransactionStatus, TransactionType } from '@prisma/client';
 
 @Injectable()
 export class TicketService {
@@ -20,112 +21,167 @@ export class TicketService {
     private paymentService: PaymentService,
   ) {}
 
-  async verifyTicket(payload: {
-    ticketId?: string;
-    code?: string;
-    eventId: string;
-    userId: string;
-  }) {
-    const { ticketId, code, eventId, userId } = payload;
-
-    if (!ticketId && !code) {
-      throw new BadRequestException('Either ticketId or code is required');
-    }
-
-    // Find ticket by ID or code
-    const ticket = await this.prisma.ticket.findFirst({
-      where: {
-        eventId,
-        ...(ticketId ? { id: ticketId } : { code }),
-      },
-      include: { event: true },
+  // ===================== Private Helpers =====================
+  private async validateEvent(eventId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
     });
-
-    if (!ticket) throw new NotFoundException('Ticket not found');
-
-    const isOrganizer = ticket.event.organizerId === userId;
-
-    let updated = false;
-
-    // If organizer, mark as used
-    if (isOrganizer && !ticket.isUsed) {
-      await this.prisma.ticket.update({
-        where: { id: ticket.id },
-        data: { isUsed: true },
-      });
-      updated = true;
+    if (!event || !event.isActive) {
+      this.logger.warn(`Event ${eventId} not found or inactive`);
+      throw new NotFoundException('Event not available');
     }
-
-    return {
-      ticketId: ticket.id,
-      code: ticket.code,
-      eventId: ticket.eventId,
-      status: ticket.isUsed ? 'USED' : 'VALID',
-      markedUsed: updated,
-      message: ticket.isUsed
-        ? 'Ticket has already been used'
-        : isOrganizer
-          ? 'Ticket marked as used'
-          : 'Ticket is valid',
-    };
+    if (event.date < new Date()) {
+      this.logger.warn(`Event ${eventId} already passed`);
+      throw new BadRequestException('Event already passed');
+    }
+    return event;
   }
 
+  private async validateUser(userId: string, event: any) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      this.logger.error(`User ${userId} not found`);
+      throw new NotFoundException('User not found');
+    }
+    if (userId === event.organizerId) {
+      this.logger.warn(`Organizer ${userId} cannot buy their own tickets`);
+      throw new BadRequestException('Organizer cannot buy their own tickets');
+    }
+    return user;
+  }
+
+  private async createTickets(
+    userId: string,
+    eventId: string,
+    quantity: number,
+  ): Promise<string[]> {
+    const ticketIds: string[] = [];
+    for (let i = 0; i < quantity; i++) {
+      const code = await this.paymentService.generateUniqueTicketCode();
+      const ticket = await this.prisma.ticket.create({
+        data: { userId, eventId, code },
+      });
+      ticketIds.push(ticket.id);
+    }
+    return ticketIds;
+  }
+
+  private async createTransaction(
+    reference: string,
+    userId: string,
+    eventId: string,
+    amount: number,
+    type: TransactionType,
+    status: TransactionStatus,
+    ticketIds: string[],
+  ) {
+    await this.prisma.transaction.create({
+      data: {
+        reference,
+        userId,
+        eventId,
+        type,
+        status,
+        amount,
+        tickets: { create: ticketIds.map((id) => ({ ticketId: id })) },
+      },
+    });
+  }
+
+  private async initiatePayment(
+    user: any,
+    event: any,
+    totalAmount: number,
+    reference: string,
+    ticketIds: string[],
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    clientPage: string,
+  ): Promise<string> {
+    const checkoutUrl = await this.paymentService.initiatePayment({
+      customer: { email: user.email, name: user.name },
+      amount: totalAmount,
+      currency: 'NGN',
+      reference,
+      processor: 'kora',
+      narration: `Tickets for ${event.name}`,
+      notification_url: process.env.NOTIFICATION_URL,
+      // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
+      metadata: { ticketIds },
+    });
+    if (!checkoutUrl)
+      throw new BadRequestException('Failed to generate payment link');
+    return checkoutUrl;
+  }
+
+  private async rollbackTransaction(reference: string, ticketIds: string[]) {
+    await this.prisma.transactionTicket.deleteMany({
+      where: { ticketId: { in: ticketIds } },
+    });
+    await this.prisma.ticket.deleteMany({ where: { id: { in: ticketIds } } });
+    await this.prisma.transaction.delete({ where: { reference } });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  private async validateResaleTickets(
+    tickets: any[],
+    ticketIds: string[],
+    userId: string,
+  ) {
+    if (tickets.length !== ticketIds.length) {
+      throw new NotFoundException(
+        'One or more tickets not found or not listed for resale',
+      );
+    }
+    const eventId = tickets[0].eventId;
+    const allSameEvent = tickets.every((ticket) => ticket.eventId === eventId);
+    if (!allSameEvent) {
+      throw new BadRequestException(
+        'All tickets must belong to the same event',
+      );
+    }
+    for (const ticket of tickets) {
+      if (ticket.userId === userId) {
+        throw new BadRequestException('You cannot buy your own ticket');
+      }
+      if (!ticket.event.isActive || ticket.event.date < new Date()) {
+        throw new BadRequestException(
+          `Event for ticket ${ticket.id} is not active or has passed`,
+        );
+      }
+      if (userId === ticket.event.organizerId) {
+        this.logger.warn(`Organizer ${userId} cannot buy their own tickets`);
+        throw new BadRequestException('Organizer cannot buy their own tickets');
+      }
+    }
+    return eventId;
+  }
+
+  private async lockResaleTickets(tx: any, ticketIds: string[]) {
+    await tx.ticket.updateMany({
+      where: { id: { in: ticketIds } },
+      data: { isListed: false },
+    });
+  }
+
+  // ===================== Ticket Purchase =====================
   async buyNewTicket(dto: BuyNewDto, userId: string, clientPage: string) {
     this.logger.log(
       `Starting ticket purchase for event ${dto.eventId} by user ${userId}`,
     );
 
-    // Step 1: Validate event
-    const event = await this.prisma.event.findUnique({
-      where: { id: dto.eventId },
-    });
-    if (!event || !event.isActive) {
-      this.logger.warn(`Event ${dto.eventId} not found or inactive`);
-      throw new NotFoundException('Event not available');
-    }
-    if (event.date < new Date()) {
-      this.logger.warn(`Event ${dto.eventId} already passed`);
-      throw new BadRequestException('Event already passed');
-    }
-
-    // Step 2: Validate supply
+    const event = await this.validateEvent(dto.eventId);
     if (event.minted + dto.quantity > event.maxTickets) {
       this.logger.warn(`Not enough tickets for event ${dto.eventId}`);
       throw new BadRequestException('Not enough tickets available');
     }
+    const user = await this.validateUser(userId, event);
 
-    // Step 3: Validate user
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-    if (!user) {
-      this.logger.error(`User ${userId} not found`);
-      throw new NotFoundException('User not found');
-    }
-
-    if (userId === event.organizerId) {
-      this.logger.warn(`Organizer ${userId} cannot buy their own tickets`);
-      throw new BadRequestException('Organizer cannot buy their own tickets');
-    }
-
-    // Step 4: Generate unique reference
+    const totalAmount = event.price * dto.quantity;
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    // Step 5: Create tickets
-    const ticketIds: string[] = [];
+    let ticketIds: string[];
     try {
-      this.logger.log(`Creating ${dto.quantity} ticket(s) for user ${userId}`);
-      for (let i = 0; i < dto.quantity; i++) {
-        const code = await this.paymentService.generateUniqueTicketCode();
-        const ticket = await this.prisma.ticket.create({
-          data: {
-            userId,
-            eventId: dto.eventId,
-            code,
-          },
-        });
-        ticketIds.push(ticket.id);
-      }
+      ticketIds = await this.createTickets(userId, dto.eventId, dto.quantity);
     } catch (err) {
       this.logger.error(
         `Ticket creation failed for event ${dto.eventId}`,
@@ -134,281 +190,160 @@ export class TicketService {
       throw new BadRequestException('Error while creating tickets');
     }
 
-    const totalAmount = event.price * dto.quantity;
-    // Step 6: Create transaction
     try {
-      this.logger.log(`Creating transaction for reference ${reference}`);
-      await this.prisma.transaction.create({
-        data: {
+      if (event.price === 0) {
+        // Free event: Skip payment, create transaction with SUCCESS status
+        await this.createTransaction(
           reference,
           userId,
-          eventId: dto.eventId,
-          type: 'PURCHASE',
-          status: 'PENDING',
-          amount: totalAmount + totalAmount * (5 / 100),
-          tickets: {
-            create: ticketIds.map((id) => ({
-              ticketId: id,
-            })),
-          },
-        },
-      });
-    } catch (err) {
-      this.logger.error(
-        `Transaction creation failed for ref ${reference}`,
-        err.stack,
-      );
-      // Rollback tickets
-      await this.prisma.ticket.deleteMany({
-        where: { id: { in: ticketIds } },
-      });
-      throw new BadRequestException('Failed to create transaction');
-    }
-
-    // Step 7: Initiate payment
-    let checkoutUrl: string | null = null;
-    try {
-      this.logger.log(`Initiating payment for transaction ref ${reference}`);
-      this.logger.log(
-        `Initiating payment for transaction from url ${process.env.FRONTEND_URL + clientPage} `,
-      );
-
-      checkoutUrl = await this.paymentService.initiatePayment({
-        customer: { email: user.email, name: user.name },
-        amount: totalAmount + totalAmount * (5 / 100),
-        currency: 'NGN',
-        reference,
-        processor: 'kora',
-        narration: `Tickets for ${event.name}`,
-        notification_url: `${process.env.NOTIFICATION_URL}`,
-        // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
-        metadata: { ticketIds },
-      });
-
-      if (!checkoutUrl) {
-        throw new Error('No checkout URL returned from payment gateway');
+          dto.eventId,
+          0,
+          'PURCHASE',
+          'SUCCESS',
+          ticketIds,
+        );
+        await this.prisma.event.update({
+          where: { id: dto.eventId },
+          data: { minted: { increment: ticketIds.length } },
+        });
+        return {
+          message: 'Free tickets created successfully',
+          ticketIds,
+        };
       }
 
+      // Paid event: Create pending transaction and initiate payment
+      await this.createTransaction(
+        reference,
+        userId,
+        dto.eventId,
+        totalAmount + totalAmount * 0.05,
+        'PURCHASE',
+        'PENDING',
+        ticketIds,
+      );
+      const checkoutUrl = await this.initiatePayment(
+        user,
+        event,
+        totalAmount + totalAmount * 0.05,
+        reference,
+        ticketIds,
+        clientPage,
+      );
       this.logger.log(`Payment initiated: ${checkoutUrl}`);
+      return { checkoutUrl };
     } catch (err) {
       this.logger.error(
         `Payment initiation failed for ref ${reference}`,
         err.stack,
       );
-
-      // Mark transaction as failed
-      await this.prisma.transaction.updateMany({
-        where: { reference },
-        data: { status: 'FAILED' },
-      });
-
-      // Delete ticket associations
-      await this.prisma.transactionTicket.deleteMany({
-        where: { ticketId: { in: ticketIds } },
-      });
-
-      // Delete the tickets themselves
-      await this.prisma.ticket.deleteMany({
-        where: { id: { in: ticketIds } },
-      });
-
+      await this.rollbackTransaction(reference, ticketIds);
       throw new BadRequestException(
         'Payment initialization failed. Please try again.',
       );
     }
-
-    // Step 8: Return payment URL
-    return { checkoutUrl };
   }
 
   async buyResaleTicket(dto: BuyResaleDto, userId: string) {
-    try {
-      const { ticketIds } = dto;
+    const { ticketIds } = dto;
 
-      return await this.prisma.$transaction(async (tx) => {
-        const tickets = await tx.ticket.findMany({
-          where: {
-            id: { in: ticketIds },
-            isListed: true,
-            resalePrice: { not: null },
-          },
-          include: { event: true, user: true },
-        });
+    return this.prisma.$transaction(async (tx) => {
+      const tickets = await tx.ticket.findMany({
+        where: {
+          id: { in: ticketIds },
+          isListed: true,
+          resalePrice: { not: null },
+        },
+        include: { event: true, user: true },
+      });
 
-        if (tickets.length !== ticketIds.length) {
-          throw new NotFoundException(
-            'One or more tickets not found or not listed for resale',
-          );
-        }
+      const eventId = await this.validateResaleTickets(
+        tickets,
+        ticketIds,
+        userId,
+      );
+      const buyer = await this.validateUser(userId, tickets[0].event);
 
-        // Check for duplicates (any ticket already locked)
-        const existingTx = await tx.transaction.findFirst({
-          where: {
-            status: 'PENDING',
-            type: 'RESALE',
-            tickets: {
-              some: {
-                ticketId: { in: ticketIds },
-              },
-            },
-          },
-        });
-
-        if (existingTx) {
-          throw new BadRequestException(
-            `Some tickets are already reserved in another transaction`,
-          );
-        }
-
-        const eventId = tickets[0].eventId;
-        const allSameEvent = tickets.every(
-          (ticket) => ticket.eventId === eventId,
+      const existingTx = await tx.transaction.findFirst({
+        where: {
+          status: 'PENDING',
+          type: 'RESALE',
+          tickets: { some: { ticketId: { in: ticketIds } } },
+        },
+      });
+      if (existingTx) {
+        throw new BadRequestException(
+          'Some tickets are already reserved in another transaction',
         );
-        if (!allSameEvent) {
-          throw new BadRequestException(
-            'All tickets must belong to the same event',
-          );
-        }
+      }
 
-        for (const ticket of tickets) {
-          if (ticket.userId === userId) {
-            throw new BadRequestException('You cannot buy your own ticket');
-          }
-          if (!ticket.event.isActive || ticket.event.date < new Date()) {
-            throw new BadRequestException(
-              `Event for ticket ${ticket.id} is not active or has passed`,
-            );
-          }
+      const totalAmount = tickets.reduce(
+        (sum, ticket) => sum + (ticket.resalePrice || 0),
+        0,
+      );
+      const reference = `resale_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
-          if (userId === ticket.event.organizerId) {
-            this.logger.warn(
-              `Organizer ${userId} cannot buy their own tickets`,
-            );
-            throw new BadRequestException(
-              'Organizer cannot buy their own tickets',
-            );
-          }
-        }
-
-        const buyer = await tx.user.findUnique({
-          where: { id: userId },
-        });
-        if (!buyer) throw new NotFoundException('Buyer not found');
-
-        const totalAmount = tickets.reduce(
-          (sum, ticket) => sum + (ticket.resalePrice || 0),
-          0,
-        );
-        const finalAmount = totalAmount;
-
-        const reference = `resale_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 6)}`;
-
-        // Step: Lock tickets immediately to prevent double-purchase
-        await tx.ticket.updateMany({
-          where: { id: { in: ticketIds } },
-          data: { isListed: false },
-        });
-
-        // Create transaction
+      await this.lockResaleTickets(tx, ticketIds);
+      try {
         await tx.transaction.create({
           data: {
             reference,
             userId,
             eventId,
-            amount: finalAmount,
+            amount: totalAmount,
             type: 'RESALE',
             status: 'PENDING',
             tickets: {
-              create: ticketIds.map((id) => ({
-                ticket: { connect: { id } },
-              })),
+              create: ticketIds.map((id) => ({ ticket: { connect: { id } } })),
             },
           },
         });
 
-        const checkoutUrl = await this.paymentService.initiatePayment({
-          customer: {
-            email: buyer.email,
-            name: buyer.name,
-          },
-          amount: finalAmount,
-          currency: 'NGN',
+        const checkoutUrl = await this.initiatePayment(
+          buyer,
+          tickets[0].event,
+          totalAmount,
           reference,
-          processor: 'kora',
-          narration: `Resale tickets for ${tickets[0].event.name}`,
-          notification_url: `${process.env.NOTIFICATION_URL}`,
-          // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
-          metadata: { ticketIds },
-        });
-
-        if (!checkoutUrl) {
-          // Revert lock (reset isListed)
-          await tx.ticket.updateMany({
-            where: { id: { in: ticketIds } },
-            data: { isListed: true },
-          });
-
-          // Delete the transaction
-          await tx.transaction.delete({ where: { reference } });
-
-          throw new BadRequestException('Failed to generate payment link');
-        }
+          ticketIds,
+          '',
+        );
 
         return { checkoutUrl };
-      });
-    } catch (error) {
-      console.error('[Buy Resale Ticket Error]', error);
-
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
+      } catch {
+        await tx.ticket.updateMany({
+          where: { id: { in: ticketIds } },
+          data: { isListed: true },
+        });
+        throw new BadRequestException('Failed to generate payment link');
       }
-
-      throw new BadRequestException(
-        error?.response?.data?.message ||
-          'Something went wrong while buying resale tickets',
-      );
-    }
+    });
   }
 
+  // ===================== Resale Management =====================
   async listForResale(dto: ListResaleDto, userId: string) {
     const { ticketId, resalePrice, bankCode, accountNumber } = dto;
 
     return this.prisma.$transaction(async (tx) => {
-      // Step 1: Fetch ticket with lock (deduping logic inside transaction)
       const ticket = await tx.ticket.findFirst({
-        where: {
-          id: ticketId,
-          userId,
-        },
+        where: { id: ticketId, userId },
         include: { event: true },
       });
-
       if (!ticket) {
         throw new NotFoundException('Ticket not found or not owned by user');
       }
-
-      // Step 2: Validate ticket conditions
       if (ticket.isUsed) {
         throw new BadRequestException(
           `Ticket ${ticket.id} has already been used`,
         );
       }
-
       if (ticket.isListed) {
         throw new BadRequestException(`Ticket ${ticket.id} is already listed`);
       }
-
       if (ticket.resaleCount >= 1) {
         throw new BadRequestException(
           `Ticket ${ticket.id} can only be resold once`,
         );
       }
-
       if (
         !ticket.event ||
         !ticket.event.isActive ||
@@ -419,9 +354,8 @@ export class TicketService {
         );
       }
 
-      // Step 3: Atomically update ticket
       try {
-        await tx.ticket.update({
+        const updatedTicket = await tx.ticket.update({
           where: { id: ticketId },
           data: {
             isListed: true,
@@ -431,13 +365,14 @@ export class TicketService {
             accountNumber,
           },
         });
-      } catch (error) {
-        console.error('[List Resale Ticket Error]', error);
+        return updatedTicket;
+      } catch (err) {
+        this.logger.error(
+          `Failed to list ticket ${ticketId} for resale`,
+          err.stack,
+        );
         throw new BadRequestException('Failed to list ticket for resale');
       }
-
-      // Step 4: Return updated ticket
-      return tx.ticket.findUnique({ where: { id: ticketId } });
     });
   }
 
@@ -445,27 +380,18 @@ export class TicketService {
     const { ticketId } = dto;
 
     return this.prisma.$transaction(async (tx) => {
-      // Step 1: Fetch ticket
       const ticket = await tx.ticket.findFirst({
-        where: {
-          id: ticketId,
-          userId,
-        },
+        where: { id: ticketId, userId },
         include: { event: true },
       });
-
       if (!ticket) {
         throw new NotFoundException('Ticket not found or not owned by user');
       }
-
-      // Step 2: Check if ticket is currently listed
       if (!ticket.isListed) {
         throw new BadRequestException(
           `Ticket ${ticket.id} is not listed for resale`,
         );
       }
-
-      // Optional: Check event validity (you may skip if not necessary)
       if (
         !ticket.event ||
         !ticket.event.isActive ||
@@ -476,9 +402,8 @@ export class TicketService {
         );
       }
 
-      // Step 3: Update ticket to remove from resale
       try {
-        await tx.ticket.update({
+        const updatedTicket = await tx.ticket.update({
           where: { id: ticketId },
           data: {
             isListed: false,
@@ -488,32 +413,32 @@ export class TicketService {
             accountNumber: null,
           },
         });
-      } catch (error) {
-        console.error('[Remove Resale Ticket Error]', error);
+        return updatedTicket;
+      } catch (err) {
+        this.logger.error(
+          `Failed to remove ticket ${ticketId} from resale`,
+          err.stack,
+        );
         throw new BadRequestException('Failed to remove ticket from resale');
       }
-
-      // Step 4: Return updated ticket
-      return tx.ticket.findUnique({ where: { id: ticketId } });
     });
   }
 
+  // ===================== Queries =====================
   async getResaleTickets(eventId?: string) {
     const where: any = { isListed: true, soldTo: null };
     if (eventId) where.eventId = eventId;
 
-    const resaleTickets = await this.prisma.ticket.findMany({
+    return this.prisma.ticket.findMany({
       where,
       include: {
         event: true,
         user: {
           select: { id: true, name: true, email: true, profileImage: true },
-        }, // seller info
+        },
       },
       orderBy: { listedAt: 'desc' },
     });
-
-    return resaleTickets;
   }
 
   async getMyListings(userId: string) {
@@ -536,20 +461,53 @@ export class TicketService {
     return this.prisma.ticket.findMany({
       where: {
         userId,
-        TransactionTicket: {
-          some: {
-            transaction: {
-              status: 'SUCCESS',
-            },
-          },
-        },
+        TransactionTicket: { some: { transaction: { status: 'SUCCESS' } } },
       },
-      include: {
-        event: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      include: { event: true },
+      orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // ===================== Verification =====================
+  async verifyTicket(payload: {
+    ticketId?: string;
+    code?: string;
+    eventId: string;
+    userId: string;
+  }) {
+    const { ticketId, code, eventId, userId } = payload;
+    if (!ticketId && !code) {
+      throw new BadRequestException('Either ticketId or code is required');
+    }
+
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { eventId, ...(ticketId ? { id: ticketId } : { code }) },
+      include: { event: true },
+    });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const isOrganizer = ticket.event.organizerId === userId;
+    let updated = false;
+
+    if (isOrganizer && !ticket.isUsed) {
+      await this.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { isUsed: true },
+      });
+      updated = true;
+    }
+
+    return {
+      ticketId: ticket.id,
+      code: ticket.code,
+      eventId: ticket.eventId,
+      status: ticket.isUsed ? 'USED' : 'VALID',
+      markedUsed: updated,
+      message: ticket.isUsed
+        ? 'Ticket has already been used'
+        : isOrganizer
+          ? 'Ticket marked as used'
+          : 'Ticket is valid',
+    };
   }
 }
