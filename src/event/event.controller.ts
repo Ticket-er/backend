@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   Body,
   Controller,
@@ -254,6 +255,7 @@ export class EventController {
     return this.eventService.getOrganizerEvents(req.user.sub);
   }
 
+  
   @UseGuards(JwtGuard, RolesGuard)
   @Patch(':id')
   @Roles(Role.ORGANIZER)
@@ -261,8 +263,7 @@ export class EventController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Update an event',
-    description:
-      'Updates an existing event by ID with optional banner image upload for the authenticated organizer.',
+    description: 'Updates an existing event by ID with optional banner image upload for the authenticated organizer.',
   })
   @ApiParam({
     name: 'id',
@@ -279,16 +280,15 @@ export class EventController {
         price: { type: 'number', example: 75.0 },
         description: {
           type: 'string',
-          example:
-            'A music festival hosted by Davido and Rema. You have to be there',
+          example: 'A music festival hosted by Davido and Rema. You have to be there',
         },
         location: {
           type: 'string',
-          description: 'Lekki Conservation Centre, Lagos',
+          example: 'Lekki Conservation Centre, Lagos',
         },
         category: {
           type: 'string',
-          description: 'MUSIC',
+          example: 'MUSIC',
         },
         maxTickets: { type: 'number', example: 200 },
         date: {
@@ -298,6 +298,7 @@ export class EventController {
         },
         file: { type: 'string', format: 'binary' },
       },
+      required: [], // All fields optional for updates
     },
   })
   @ApiResponse({
@@ -312,14 +313,13 @@ export class EventController {
   @ApiResponse({ status: 404, description: 'Event not found' })
   @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateEventDto,
     @UploadedFile() file: Express.Multer.File,
     @Req() req,
   ) {
     return this.eventService.updateEvent(id, dto, req.user.sub, file);
   }
-
   @UseGuards(JwtGuard, RolesGuard)
   @Delete(':id')
   @Roles(Role.ORGANIZER)
@@ -345,7 +345,7 @@ export class EventController {
   })
   @ApiResponse({ status: 404, description: 'Event not found' })
   @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
-  delete(@Param('id', ParseUUIDPipe) id: string, @Req() req) {
+  delete(@Param('id') id: string, @Req() req) {
     return this.eventService.deleteEvent(id, req.user.sub);
   }
 

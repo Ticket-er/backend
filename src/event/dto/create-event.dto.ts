@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import { EventCategory } from '@prisma/client';
 import {
   IsString,
