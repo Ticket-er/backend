@@ -9,15 +9,20 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CacheHelper } from '../common/cache/cache.helper';
+import { QueueHelper } from '../common/queue/queue.helper';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import slugify from 'slugify';
 
 @Injectable()
 export class EventService {
   private readonly logger = new Logger(EventService.name);
+
   constructor(
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
+    private cacheHelper: CacheHelper,
+    private queueHelper: QueueHelper,
   ) {}
 
   async createEvent(
@@ -26,65 +31,85 @@ export class EventService {
     file?: Express.Multer.File,
   ) {
     this.logger.log(`Starting event creation for user: ${userId}`);
-    this.logger.debug(`DTO received: ${JSON.stringify(dto, null, 2)}`);
-    if (file) {
-      this.logger.log(`File received: ${file.originalname}`);
-    } else {
-      this.logger.warn('No file provided');
-    }
 
     let bannerUrl: string | undefined;
 
-    // Step 1: Handle Image Upload
+    // Step 1: Enqueue image upload if file exists
     if (file) {
-      try {
-        const upload = await this.cloudinary.uploadImage(
-          file,
-          'ticketer/events',
-        );
-        bannerUrl = upload;
-        this.logger.log(`Image uploaded successfully: ${bannerUrl}`);
-      } catch (err) {
-        this.logger.error(`Image upload failed: ${err.message}`);
-        throw new InternalServerErrorException('Failed to upload event banner');
-      }
+      const fileId = `${userId}-${Date.now()}`;
+      await this.queueHelper.enqueue('upload-image', {
+        file,
+        folder: 'ticketer/events',
+        fileId,
+      });
+      // Store fileId to retrieve bannerUrl later (cache or DB)
+      await this.cacheHelper.set(
+        `upload:${fileId}`,
+        { status: 'pending' },
+        { ttl: 300 },
+      );
     }
 
-    // Step 2: Save Event to DB
+    // Step 2: Create event in a transaction
     try {
       const price = Number(dto.price);
       const maxTickets = Number(dto.maxTickets);
-
-      // Generate base slug from name
       const baseSlug = slugify(dto.name, { lower: true, strict: true });
 
-      // Check for duplicates & append random string if necessary
-      let slug = baseSlug;
-      const exists = await this.prisma.event.findUnique({ where: { slug } });
-      if (exists) {
-        slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
-      }
+      const event = await this.prisma.$transaction(async (tx) => {
+        // Check for slug uniqueness
+        let slug = baseSlug;
+        const exists = await tx.event.findUnique({
+          where: { slug },
+          select: { id: true },
+        });
+        if (exists) {
+          slug = `${baseSlug}-${Date.now().toString().slice(-5)}`;
+        }
 
-      const event = await this.prisma.event.create({
-        data: {
-          name: dto.name,
-          price,
-          maxTickets,
-          slug,
-          description: dto.description || dto.name,
-          organizerId: userId,
-          location: dto.location || 'Not specified',
-          date: dto.date,
-          category: dto.category,
-          isActive: true,
-          bannerUrl,
-        },
+        return tx.event.create({
+          data: {
+            name: dto.name,
+            price,
+            maxTickets,
+            slug,
+            description: dto.description || dto.name,
+            organizerId: userId,
+            location: dto.location || 'Not specified',
+            date: dto.date,
+            category: dto.category,
+            isActive: true,
+            bannerUrl,
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+            organizerId: true,
+          },
+        });
       });
 
-      this.logger.log(`Event created with ID: ${event.id}`);
+      // Cache event
+      await this.cacheHelper.set(`event:id:${event.id}`, event, { ttl: 3600 });
+      await this.cacheHelper.set(`event:slug:${event.slug}`, event, {
+        ttl: 3600,
+      });
+
       return event;
     } catch (err) {
-      this.logger.error(`Error creating event: ${err.message}`, err.stack);
+      this.logger.error(
+        `Error while creating event: ${err.message}`,
+        err.stack,
+      );
       throw new InternalServerErrorException('Failed to create event');
     }
   }
@@ -95,25 +120,52 @@ export class EventService {
     userId: string,
     file?: Express.Multer.File,
   ) {
-    const event = await this.prisma.event.findUnique({
-      where: { id: eventId },
-    });
+    const event = await this.cacheHelper.getOrSet(
+      eventId,
+      async () =>
+        this.prisma.event.findUnique({
+          where: { id: eventId },
+          select: {
+            id: true,
+            organizerId: true,
+            bannerUrl: true,
+            name: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            slug: true,
+          },
+        }),
+      { keyPrefix: 'event:id:', ttl: 3600 },
+    );
+
     if (!event) throw new NotFoundException('Event not found');
     if (event.organizerId !== userId)
       throw new ForbiddenException('Access denied');
 
-    let bannerUrl = event.bannerUrl;
-
+    const bannerUrl = event.bannerUrl;
     if (file) {
-      const upload = await this.cloudinary.uploadImage(file, 'ticketer/events');
-      bannerUrl = upload;
+      const fileId = `${userId}-${Date.now()}`;
+      await this.queueHelper.enqueue('upload-image', {
+        file,
+        folder: 'ticketer/events',
+        fileId,
+      });
+      await this.cacheHelper.set(
+        `upload:${fileId}`,
+        { status: 'pending' },
+        { ttl: 300 },
+      );
     }
 
     const price = dto.price !== undefined ? Number(dto.price) : event.price;
     const maxTickets =
       dto.maxTickets !== undefined ? Number(dto.maxTickets) : event.maxTickets;
 
-    return this.prisma.event.update({
+    const updatedEvent = await this.prisma.event.update({
       where: { id: eventId },
       data: {
         name: dto.name || event.name,
@@ -122,70 +174,134 @@ export class EventService {
         maxTickets,
         location: dto.location || event.location,
         date: dto.date || event.date,
-        category: dto.category || event.category, // ✅ update category
+        category: dto.category || event.category,
         bannerUrl,
       },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        price: true,
+        maxTickets: true,
+        description: true,
+        location: true,
+        date: true,
+        category: true,
+        isActive: true,
+        bannerUrl: true,
+        organizerId: true,
+      },
     });
+
+    // Update cache
+    await this.cacheHelper.set(`event:id:${eventId}`, updatedEvent, {
+      ttl: 3600,
+    });
+    await this.cacheHelper.set(
+      `event:slug:${updatedEvent.slug}`,
+      updatedEvent,
+      { ttl: 3600 },
+    );
+
+    return updatedEvent;
   }
 
   async toggleEventStatus(id: string, isActive: boolean, userId: string) {
-    const event = await this.prisma.event.findUnique({ where: { id } });
+    const event = await this.cacheHelper.getOrSet(
+      id,
+      async () =>
+        this.prisma.event.findUnique({
+          where: { id },
+          select: { id: true, organizerId: true, isActive: true },
+        }),
+      { keyPrefix: 'event:id:', ttl: 3600 },
+    );
+
     if (!event) throw new NotFoundException('Event not found');
     if (event.organizerId !== userId)
       throw new ForbiddenException('Access denied');
 
-    return this.prisma.event.update({
+    const updatedEvent = await this.prisma.event.update({
       where: { id },
       data: { isActive },
+      select: { id: true, isActive: true, slug: true },
     });
+
+    // Update cache
+    await this.cacheHelper.set(`event:id:${id}`, updatedEvent, { ttl: 3600 });
+    await this.cacheHelper.set(
+      `event:slug:${updatedEvent.slug}`,
+      updatedEvent,
+      { ttl: 3600 },
+    );
+
+    return updatedEvent;
   }
 
   async deleteEvent(id: string, userId: string) {
-    // Step 1: Fetch event
-    const event = await this.prisma.event.findUnique({ where: { id } });
+    const event = await this.cacheHelper.getOrSet(
+      id,
+      async () =>
+        this.prisma.event.findUnique({
+          where: { id },
+          select: { id: true, organizerId: true, bannerUrl: true, slug: true },
+        }),
+      { keyPrefix: 'event:id:', ttl: 3600 },
+    );
 
-    if (!event) {
-      throw new NotFoundException('Event not found');
-    }
-
-    // Step 2: Check ownership
-    if (event.organizerId !== userId) {
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.organizerId !== userId)
       throw new ForbiddenException('Access denied');
-    }
 
-    // Step 3: Check if any tickets have been bought
-    const ticketsCount = await this.prisma.ticket.count({
-      where: { eventId: id },
-    });
-
-    if (ticketsCount > 0) {
-      throw new BadRequestException(
-        'Event cannot be deleted because tickets have already been purchased',
-      );
-    }
-
-    // Step 4: Delete banner from Cloudinary (optional)
-    if (event.bannerUrl) {
-      try {
-        await this.cloudinary.deleteImage(event.bannerUrl);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to delete banner from Cloudinary: ${err.message}`,
+    await this.prisma.$transaction(async (tx) => {
+      const ticketsCount = await tx.ticket.count({ where: { eventId: id } });
+      if (ticketsCount > 0) {
+        throw new BadRequestException(
+          'Event cannot be deleted because tickets have already been purchased',
         );
       }
+
+      await tx.event.delete({ where: { id } });
+    });
+
+    // Enqueue banner deletion
+    if (event.bannerUrl) {
+      await this.queueHelper.enqueue('delete-image', {
+        imageUrl: event.bannerUrl,
+      });
     }
 
-    // Step 5: Delete event
-    await this.prisma.event.delete({ where: { id } });
+    // Invalidate cache
+    await this.cacheHelper.invalidate(`event:id:${id}`);
+    await this.cacheHelper.invalidate(`event:slug:${event.slug}`);
+    await this.cacheHelper.invalidate(`events:organizer:${userId}`);
 
     return { message: 'Event deleted successfully', eventId: id };
   }
 
   async getOrganizerEvents(userId: string) {
-    const events = await this.prisma.event.findMany({
-      where: { organizerId: userId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const events = await this.cacheHelper.getOrSet(
+      userId,
+      async () =>
+        this.prisma.event.findMany({
+          where: { organizerId: userId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+          },
+        }),
+      { keyPrefix: 'events:organizer:', ttl: 3600 },
+    );
 
     if (events.length === 0) {
       return { message: 'You have not created any events yet' };
@@ -194,72 +310,140 @@ export class EventService {
     return events;
   }
 
-  async getSingleEvent(eventId) {
-    const event = await this.prisma.event.findUnique({
-      where: { id: eventId },
-      include: {
-        organizer: {
-          select: { name: true, email: true, profileImage: true },
-        },
-        tickets: {
-          where: { isListed: true },
+  async getSingleEvent(eventId: string) {
+    const event = await this.cacheHelper.getOrSet(
+      eventId,
+      async () =>
+        this.prisma.event.findUnique({
+          where: { id: eventId },
           select: {
             id: true,
-            resalePrice: true,
-            listedAt: true,
-            user: {
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+            organizer: {
+              select: { name: true, email: true, profileImage: true },
+            },
+            tickets: {
+              where: { isListed: true },
               select: {
                 id: true,
-                name: true,
-                email: true,
-                profileImage: true,
+                resalePrice: true,
+                listedAt: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    profileImage: true,
+                  },
+                },
               },
             },
           },
-        },
-      },
-    });
-    if (!event) throw new NotFoundException('Event not found');
+        }),
+      { keyPrefix: 'event:id:', ttl: 3600 },
+    );
 
+    if (!event) throw new NotFoundException('Event not found');
     return event;
   }
 
   async getEventBySlug(slug: string) {
-    const event = await this.prisma.event.findUnique({
-      where: { slug },
-      include: { organizer: true, tickets: true },
-    });
+    const event = await this.cacheHelper.getOrSet(
+      slug,
+      async () =>
+        this.prisma.event.findUnique({
+          where: { slug },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+            organizer: {
+              select: { name: true, email: true, profileImage: true },
+            },
+            tickets: {
+              where: { isListed: true },
+              select: {
+                id: true,
+                resalePrice: true,
+                listedAt: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    profileImage: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+      { keyPrefix: 'event:slug:', ttl: 3600 },
+    );
 
     if (!event) throw new NotFoundException('Event not found');
     return event;
   }
 
   async getAllEvents() {
-    return this.prisma.event.findMany({
-      where: { isActive: true },
-      include: {
-        organizer: {
-          select: { name: true, email: true, profileImage: true },
-        },
-        tickets: {
-          where: { isListed: true },
+    return this.cacheHelper.getOrSet(
+      'all',
+      async () =>
+        this.prisma.event.findMany({
+          where: { isActive: true },
           select: {
             id: true,
-            resalePrice: true,
-            listedAt: true,
-            user: {
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+            organizer: {
+              select: { name: true, email: true, profileImage: true },
+            },
+            tickets: {
+              where: { isListed: true },
               select: {
                 id: true,
-                name: true,
-                email: true,
-                profileImage: true, // optional if you use it
+                resalePrice: true,
+                listedAt: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    profileImage: true,
+                  },
+                },
               },
             },
           },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+          orderBy: { createdAt: 'desc' },
+        }),
+      { keyPrefix: 'events:', ttl: 3600 },
+    );
   }
 
   async getAllEventsFiltered(query: {
@@ -267,73 +451,154 @@ export class EventService {
     from?: string;
     to?: string;
   }) {
-    const filters: any = {
-      isActive: true,
-    };
+    const cacheKey = `filtered:${JSON.stringify(query)}`;
+    return this.cacheHelper.getOrSet(
+      cacheKey,
+      async () => {
+        const filters: any = { isActive: true };
+        if (query.name) {
+          filters.name = { contains: query.name, mode: 'insensitive' };
+        }
+        if (query.from || query.to) {
+          filters.createdAt = {};
+          if (query.from) filters.createdAt.gte = new Date(query.from);
+          if (query.to) filters.createdAt.lte = new Date(query.to);
+        }
 
-    if (query.name) {
-      filters.name = { contains: query.name, mode: 'insensitive' };
-    }
-
-    if (query.from || query.to) {
-      filters.createdAt = {};
-      if (query.from) filters.createdAt.gte = new Date(query.from);
-      if (query.to) filters.createdAt.lte = new Date(query.to);
-    }
-
-    const events = await this.prisma.event.findMany({
-      where: filters,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        organizer: { select: { name: true, email: true } },
+        return this.prisma.event.findMany({
+          where: filters,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+            organizer: { select: { name: true, email: true } },
+          },
+        });
       },
-    });
+      { keyPrefix: 'events:', ttl: 300 },
+    );
+  }
+
+  async getUserEvents(userId: string) {
+    const events = await this.cacheHelper.getOrSet(
+      userId,
+      async () => {
+        const tickets = await this.prisma.ticket.findMany({
+          where: { userId },
+          select: {
+            eventId: true,
+            id: true,
+            resalePrice: true,
+            listedAt: true,
+            event: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                price: true,
+                maxTickets: true,
+                description: true,
+                location: true,
+                date: true,
+                category: true,
+                isActive: true,
+                bannerUrl: true,
+              },
+            },
+          },
+        });
+
+        const grouped = tickets.reduce(
+          (acc, ticket) => {
+            const id = ticket.eventId;
+            if (!acc[id]) {
+              acc[id] = {
+                ...ticket.event,
+                tickets: [],
+                ticketCount: 0,
+              };
+            }
+            acc[id].tickets.push({
+              id: ticket.id,
+              resalePrice: ticket.resalePrice,
+              listedAt: ticket.listedAt,
+            });
+            acc[id].ticketCount++;
+            return acc;
+          },
+          {} as Record<string, any>,
+        );
+
+        return Object.values(grouped);
+      },
+      { keyPrefix: 'user:events:', ttl: 3600 },
+    );
 
     return events;
   }
-  async getUserEvents(userId: string) {
-    const tickets = await this.prisma.ticket.findMany({
-      where: { userId },
-      include: { event: true },
-    });
-
-    const grouped = tickets.reduce(
-      (acc, ticket) => {
-        const id = ticket.eventId;
-        if (!acc[id]) {
-          acc[id] = {
-            ...ticket.event,
-            tickets: [],
-            ticketCount: 0,
-          };
-        }
-        acc[id].tickets.push(ticket);
-        acc[id].ticketCount++;
-        return acc;
-      },
-      {} as Record<string, any>,
-    );
-
-    return Object.values(grouped);
-  }
 
   async getUpcomingEvents() {
-    return this.prisma.event.findMany({
-      where: {
-        isActive: true,
-        date: { gte: new Date() },
-      },
-      orderBy: { date: 'asc' },
-    });
+    return this.cacheHelper.getOrSet(
+      'upcoming',
+      async () =>
+        this.prisma.event.findMany({
+          where: {
+            isActive: true,
+            date: { gte: new Date() },
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+          },
+          orderBy: { date: 'asc' },
+        }),
+      { keyPrefix: 'events:', ttl: 3600 },
+    );
   }
 
   async getPastEvents() {
-    return this.prisma.event.findMany({
-      where: {
-        isActive: true,
-        date: { lt: new Date() },
-      },
-      orderBy: { date: 'desc' },
-    });
+    return this.cacheHelper.getOrSet(
+      'past',
+      async () =>
+        this.prisma.event.findMany({
+          where: {
+            isActive: true,
+            date: { lt: new Date() },
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            price: true,
+            maxTickets: true,
+            description: true,
+            location: true,
+            date: true,
+            category: true,
+            isActive: true,
+            bannerUrl: true,
+          },
+          orderBy: { date: 'desc' },
+        }),
+      { keyPrefix: 'events:', ttl: 3600 },
+    );
   }
 }

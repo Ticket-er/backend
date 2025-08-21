@@ -16,6 +16,8 @@ import { PaymentModule } from './payment/payment.module';
 import { HttpModule } from '@nestjs/axios';
 import { WalletModule } from './wallet/wallet.module';
 import { MailService } from './mail/mail.service';
+import { CacheModule } from '@nestjs/cache-manager';
+import { CacheHelper } from './common/cache/cache.helper';
 
 @Module({
   imports: [
@@ -37,14 +39,20 @@ import { MailService } from './mail/mail.service';
     PaymentModule,
     HttpModule,
     WalletModule,
+    CacheModule.register({
+      ttl: 3600,
+      max: 1000,
+    }),
   ],
   controllers: [AppController],
   providers: [
+    CacheHelper,
     AppService,
     EventService,
     TicketService,
     PaymentService,
     MailService,
   ],
+  exports: [CacheHelper],
 })
 export class AppModule {}
