@@ -71,7 +71,7 @@ export class EventController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of active events',
+    description: 'List of active events with ticket categories',
     type: [Object],
   })
   getAll(@Query() query: { name?: string; from?: string; to?: string }) {
@@ -83,6 +83,16 @@ export class EventController {
 
   @Get('slug/:slug')
   @ApiParam({ name: 'slug', type: String })
+  @ApiOperation({
+    summary: 'Get event by slug',
+    description: 'Retrieves a single event by its unique slug.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Event found with ticket categories',
+    type: Object,
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
   getEventBySlug(@Param('slug') slug: string) {
     return this.eventService.getEventBySlug(slug);
   }
@@ -91,7 +101,7 @@ export class EventController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'Get event by ID',
-    description: 'Retrieves a single event by its UUID.',
+    description: 'Retrieves a single event by its UUID, including ticket categories.',
   })
   @ApiParam({
     name: 'id',
@@ -101,7 +111,7 @@ export class EventController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Event found',
+    description: 'Event found with ticket categories',
     type: Object,
   })
   @ApiResponse({ status: 404, description: 'Event not found' })
@@ -119,52 +129,72 @@ export class EventController {
   @ApiOperation({
     summary: 'Create a new event',
     description:
-      'Creates a new event with optional banner image upload for the authenticated organizer.',
+      'Creates a new event with ticket categories and optional banner image upload for the authenticated organizer.',
   })
   @ApiBody({
-    description: 'Event creation data and optional file upload',
+    description: 'Event creation data with ticket categories and optional file upload',
     schema: {
       type: 'object',
       properties: {
         name: { type: 'string', example: 'Music Festival' },
-        price: { type: 'number', example: 50.0 },
         description: {
           type: 'string',
-          example:
-            'A music festival hosted by Davido and Rema. You have to be there',
+          example: 'A music festival hosted by Davido and Rema.',
         },
         location: {
           type: 'string',
-          description: 'Lekki Conservation Centre, Lagos',
+          example: 'Lekki Conservation Centre, Lagos',
         },
         category: {
           type: 'string',
-          description: 'MUSIC',
+          enum: [
+            'MUSIC',
+            'CONCERT',
+            'CONFERENCE',
+            'WORKSHOP',
+            'SPORTS',
+            'COMEDY',
+            'THEATRE',
+            'FESTIVAL',
+            'EXHIBITION',
+            'RELIGION',
+            'NETWORKING',
+            'TECH',
+            'FASHION',
+            'PARTY',
+          ],
+          example: 'MUSIC',
         },
-        maxTickets: { type: 'number', example: 100 },
         date: {
           type: 'string',
           format: 'date-time',
           example: '2025-07-08T18:00:00Z',
         },
+        ticketCategories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', example: 'VVIP' },
+              price: { type: 'number', example: 100 },
+              maxTickets: { type: 'number', example: 50 },
+            },
+            required: ['name', 'price', 'maxTickets'],
+          },
+        },
         file: { type: 'string', format: 'binary' },
       },
-      required: [
-        'name',
-        'metadataURI',
-        'price',
-        'maxTickets',
-        'date',
-        'description',
-        'location',
-        'çategory',
-      ],
+      required: ['name', 'date', 'category', 'ticketCategories'],
     },
   })
   @ApiResponse({
     status: 201,
-    description: 'Event created successfully',
+    description: 'Event created successfully with ticket categories',
     type: Object,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request: Invalid data or missing ticket categories',
   })
   @ApiResponse({
     status: 403,
@@ -185,11 +215,11 @@ export class EventController {
   @ApiOperation({
     summary: 'Get user’s attended events',
     description:
-      'Retrieves events for which the authenticated user has purchased tickets, including ticket counts.',
+      'Retrieves events for which the authenticated user has purchased tickets, including ticket counts and categories.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of user events with ticket counts',
+    description: 'List of user events with ticket counts and categories',
     type: [Object],
   })
   @ApiResponse({
@@ -204,11 +234,11 @@ export class EventController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'Get upcoming events',
-    description: 'Retrieves all active events with a future date.',
+    description: 'Retrieves all active events with a future date, including ticket categories.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of upcoming events',
+    description: 'List of upcoming events with ticket categories',
     type: [Object],
   })
   getUpcoming() {
@@ -219,11 +249,11 @@ export class EventController {
   @HttpCode(200)
   @ApiOperation({
     summary: 'Get past events',
-    description: 'Retrieves all active events with a past date.',
+    description: 'Retrieves all active events with a past date, including ticket categories.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of past events',
+    description: 'List of past events with ticket categories',
     type: [Object],
   })
   getPast() {
@@ -235,17 +265,17 @@ export class EventController {
   @HttpCode(200)
   @Roles(Role.ORGANIZER)
   @ApiOperation({
-    summary: 'Get organizer’s events',
-    description: 'Retrieves all events created by the authenticated organizer.',
+    summary: 'Get organiser’s events',
+    description: 'Retrieves all events created by the authenticated organiser, including ticket categories.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of organizer events or message if none exist',
+    description: 'List of organiser events or message if none exist',
     type: [Object],
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden: User is not an organizer',
+    description: 'Forbidden: User is not an organiser',
   })
   @ApiResponse({
     status: 401,
@@ -255,7 +285,6 @@ export class EventController {
     return this.eventService.getOrganizerEvents(req.user.sub);
   }
 
-  
   @UseGuards(JwtGuard, RolesGuard)
   @Patch(':id')
   @Roles(Role.ORGANIZER)
@@ -263,7 +292,8 @@ export class EventController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Update an event',
-    description: 'Updates an existing event by ID with optional banner image upload for the authenticated organizer.',
+    description:
+      'Updates an existing event by ID with optional banner image upload. Only price and maxTickets of existing ticket categories can be updated.',
   })
   @ApiParam({
     name: 'id',
@@ -272,15 +302,14 @@ export class EventController {
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
   @ApiBody({
-    description: 'Event update data and optional file upload',
+    description: 'Event update data with optional ticket category updates and file upload',
     schema: {
       type: 'object',
       properties: {
         name: { type: 'string', example: 'Updated Festival' },
-        price: { type: 'number', example: 75.0 },
         description: {
           type: 'string',
-          example: 'A music festival hosted by Davido and Rema. You have to be there',
+          example: 'Updated description for the music festival.',
         },
         location: {
           type: 'string',
@@ -288,30 +317,69 @@ export class EventController {
         },
         category: {
           type: 'string',
+          enum: [
+            'MUSIC',
+            'CONCERT',
+            'CONFERENCE',
+            'WORKSHOP',
+            'SPORTS',
+            'COMEDY',
+            'THEATRE',
+            'FESTIVAL',
+            'EXHIBITION',
+            'RELIGION',
+            'NETWORKING',
+            'TECH',
+            'FASHION',
+            'PARTY',
+          ],
           example: 'MUSIC',
         },
-        maxTickets: { type: 'number', example: 200 },
         date: {
           type: 'string',
           format: 'date-time',
           example: '2025-08-01T18:00:00Z',
         },
+        ticketCategories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+                example: 'cuid123456789',
+                description: 'Optional ID of the existing ticket category',
+              },
+              name: {
+                type: 'string',
+                example: 'VVIP',
+                description: 'Optional name of the existing ticket category',
+              },
+              price: { type: 'number', example: 150 },
+              maxTickets: { type: 'number', example: 75 },
+            },
+            required: ['price', 'maxTickets'],
+          },
+        },
         file: { type: 'string', format: 'binary' },
       },
-      required: [], // All fields optional for updates
+      required: [],
     },
   })
   @ApiResponse({
     status: 200,
-    description: 'Event updated successfully',
+    description: 'Event updated successfully with ticket categories',
     type: Object,
   })
   @ApiResponse({
+    status: 400,
+    description: 'Bad Request: Invalid UUID or non-existent ticket category',
+  })
+  @ApiResponse({
     status: 403,
-    description: 'Forbidden: User is not the organizer',
+    description: 'Forbidden: User is not the organiser',
   })
   @ApiResponse({ status: 404, description: 'Event not found' })
-  @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
   update(
     @Param('id') id: string,
     @Body() dto: UpdateEventDto,
@@ -320,13 +388,14 @@ export class EventController {
   ) {
     return this.eventService.updateEvent(id, dto, req.user.sub, file);
   }
+
   @UseGuards(JwtGuard, RolesGuard)
   @Delete(':id')
   @Roles(Role.ORGANIZER)
   @ApiOperation({
     summary: 'Delete an event',
     description:
-      'Deletes an event by ID if no tickets have been purchased for it. Only accessible to the authenticated organizer.',
+      'Deletes an event by ID if no tickets have been purchased for it. Only accessible to the authenticated organiser.',
   })
   @ApiParam({
     name: 'id',
@@ -341,7 +410,7 @@ export class EventController {
   @ApiResponse({
     status: 403,
     description:
-      'Forbidden: User is not the organizer or tickets have already been purchased for the event',
+      'Forbidden: User is not the organiser or tickets have already been purchased for the event',
   })
   @ApiResponse({ status: 404, description: 'Event not found' })
   @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })
@@ -355,7 +424,7 @@ export class EventController {
   @ApiOperation({
     summary: 'Toggle event status',
     description:
-      'Activates or deactivates an event by ID for the authenticated organizer.',
+      'Activates or deactivates an event by ID for the authenticated organiser.',
   })
   @ApiParam({
     name: 'id',
@@ -374,7 +443,7 @@ export class EventController {
   })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden: User is not the organizer',
+    description: 'Forbidden: User is not the organiser',
   })
   @ApiResponse({ status: 404, description: 'Event not found' })
   @ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID' })

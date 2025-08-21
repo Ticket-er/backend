@@ -1,6 +1,7 @@
 export interface TicketDetails {
   ticketId: string;
   code: string;
+  categoryName: string;
   qrCodeDataUrl: string;
 }
 
@@ -34,6 +35,7 @@ export function ticketPurchaseBuyerTemplate(
                   <div style="margin-top: 20px; padding: 10px; border: 1px solid #e0e0e0; border-radius: 4px;">
                     <p style="font-size: 16px; color: #666666; margin: 5px 0;">Ticket ID: ${ticket.ticketId}</p>
                     <p style="font-size: 16px; color: #666666; margin: 5px 0;">Code: ${ticket.code}</p>
+                    <p style="font-size: 16px; color: #666666; margin: 5px 0;">Category: ${ticket.categoryName}</p>
                     <img src="${ticket.qrCodeDataUrl}" alt="QR Code for Ticket ${ticket.ticketId}" style="display: block; margin: 10px auto; width: 150px; height: 150px;" />
                   </div>
                 `,
@@ -67,6 +69,7 @@ export function ticketPurchaseOrganizerTemplate(
   event: string,
   ticketCount: number,
   proceeds: number,
+  ticketCategories: string[],
 ): string {
   return `
     <!DOCTYPE html>
@@ -86,7 +89,7 @@ export function ticketPurchaseOrganizerTemplate(
         <tr>
           <td style="padding: 0 20px 20px;">
             <h2 style="font-size: 20px; color: #333333; margin-top: 20px;">New Ticket Sale, ${organizerName}! 🎉</h2>
-            <p style="font-size: 16px; color: #666666; margin-top: 10px;">Great news! <strong>${ticketCount}</strong> ticket(s) for your event <strong>${event}</strong> have been sold.</p>
+            <p style="font-size: 16px; color: #666666; margin-top: 10px;">Great news! <strong>${ticketCount}</strong> ticket(s) for your event <strong>${event}</strong> have been sold in the following categories: <strong>${ticketCategories.join(', ')}</strong>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Proceeds of <strong>NGN ${proceeds.toFixed(2)}</strong> have been credited to your <a href="https://ticketer.com/dashboard/wallet" style="color: #1a73e8; text-decoration: underline;">wallet</a>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Track your ticket sales and manage your event in your <a href="https://ticketer.com/dashboard" style="color: #1a73e8; text-decoration: underline;">dashboard</a>.</p>
           </td>
@@ -117,6 +120,7 @@ export function ticketPurchaseAdminTemplate(
   ticketCount: number,
   platformCut: number,
   buyerName: string,
+  ticketCategories: string[],
 ): string {
   return `
     <!DOCTYPE html>
@@ -136,7 +140,7 @@ export function ticketPurchaseAdminTemplate(
         <tr>
           <td style="padding: 0 20px 20px;">
             <h2 style="font-size: 20px; color: #333333; margin-top: 20px;">New Transaction, ${adminName}</h2>
-            <p style="font-size: 16px; color: #666666; margin-top: 10px;">A purchase of <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> by <strong>${buyerName}</strong> has been completed.</p>
+            <p style="font-size: 16px; color: #666666; margin-top: 10px;">A purchase of <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> by <strong>${buyerName}</strong> has been completed in the following categories: <strong>${ticketCategories.join(', ')}</strong>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Platform cut of <strong>NGN ${platformCut.toFixed(2)}</strong> has been credited to the admin <a href="https://ticketer.com/dashboard/wallet" style="color: #1a73e8; text-decoration: underline;">wallet</a>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">View transaction details in your <a href="https://ticketer.com/admin-dashboard" style="color: #1a73e8; text-decoration: underline;">admin dashboard</a>.</p>
           </td>
@@ -191,6 +195,7 @@ export function ticketResaleBuyerTemplate(
                   <div style="margin-top: 20px; padding: 10px; border: 1px solid #e0e0e0; border-radius: 4px;">
                     <p style="font-size: 16px; color: #666666; margin: 5px 0;">Ticket ID: ${ticket.ticketId}</p>
                     <p style="font-size: 16px; color: #666666; margin: 5px 0;">Code: ${ticket.code}</p>
+                    <p style="font-size: 16px; color: #666666; margin: 5px 0;">Category: ${ticket.categoryName}</p>
                     <img src="${ticket.qrCodeDataUrl}" alt="QR Code for Ticket ${ticket.ticketId}" style="display: block; margin: 10px auto; width: 150px; height: 150px;" />
                   </div>
                 `,
@@ -224,6 +229,7 @@ export function ticketResaleSellerTemplate(
   event: string,
   ticketCount: number,
   proceeds: number,
+  ticketCategories: string[],
 ): string {
   return `
     <!DOCTYPE html>
@@ -243,7 +249,7 @@ export function ticketResaleSellerTemplate(
         <tr>
           <td style="padding: 0 20px 20px;">
             <h2 style="font-size: 20px; color: #333333; margin-top: 20px;">Your Ticket Sold, ${name}! 💸</h2>
-            <p style="font-size: 16px; color: #666666; margin-top: 10px;">Your <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> have been successfully sold on the resale market.</p>
+            <p style="font-size: 16px; color: #666666; margin-top: 10px;">Your <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> in the following categories: <strong>${ticketCategories.join(', ')}</strong> have been successfully sold on the resale market.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Proceeds of <strong>NGN ${proceeds.toFixed(2)}</strong> have been sent to your designated account. Check your <a href="https://ticketer.com/dashboard/wallet" style="color: #1a73e8; text-decoration: underline;">wallet</a> for transaction details.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">List more tickets or explore events in your <a href="https://ticketer.com/dashboard" style="color: #1a73e8; text-decoration: underline;">dashboard</a>.</p>
           </td>
@@ -273,6 +279,7 @@ export function ticketResaleOrganizerTemplate(
   event: string,
   ticketCount: number,
   royalty: number,
+  ticketCategories: string[],
 ): string {
   return `
     <!DOCTYPE html>
@@ -292,7 +299,7 @@ export function ticketResaleOrganizerTemplate(
         <tr>
           <td style="padding: 0 20px 20px;">
             <h2 style="font-size: 20px; color: #333333; margin-top: 20px;">Resale Activity, ${organizerName}</h2>
-            <p style="font-size: 16px; color: #666666; margin-top: 10px;"><strong>${ticketCount}</strong> ticket(s) for your event <strong>${event}</strong> have been resold.</p>
+            <p style="font-size: 16px; color: #666666; margin-top: 10px;"><strong>${ticketCount}</strong> ticket(s) for your event <strong>${event}</strong> in the following categories: <strong>${ticketCategories.join(', ')}</strong> have been resold.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">A royalty of <strong>NGN ${royalty.toFixed(2)}</strong> has been credited to your <a href="https://ticketer.com/dashboard/wallet" style="color: #1a73e8; text-decoration: underline;">wallet</a>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Monitor resale activity in your <a href="https://ticketer.com/dashboard" style="color: #1a73e8; text-decoration: underline;">dashboard</a>.</p>
           </td>
@@ -324,6 +331,7 @@ export function ticketResaleAdminTemplate(
   platformCut: number,
   buyerName: string,
   sellerName: string,
+  ticketCategories: string[],
 ): string {
   return `
     <!DOCTYPE html>
@@ -343,7 +351,7 @@ export function ticketResaleAdminTemplate(
         <tr>
           <td style="padding: 0 20px 20px;">
             <h2 style="font-size: 20px; color: #333333; margin-top: 20px;">New Resale Transaction, ${adminName}</h2>
-            <p style="font-size: 16px; color: #666666; margin-top: 10px;">A resale of <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> from <strong>${sellerName}</strong> to <strong>${buyerName}</strong> has been completed.</p>
+            <p style="font-size: 16px; color: #666666; margin-top: 10px;">A resale of <strong>${ticketCount}</strong> ticket(s) for <strong>${event}</strong> in the following categories: <strong>${ticketCategories.join(', ')}</strong> from <strong>${sellerName}</strong> to <strong>${buyerName}</strong> has been completed.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">Platform cut of <strong>NGN ${platformCut.toFixed(2)}</strong> has been credited to the admin <a href="https://ticketer.com/dashboard/wallet" style="color: #1a73e8; text-decoration: underline;">wallet</a>.</p>
             <p style="font-size: 16px; color: #666666; margin-top: 10px;">View transaction details in your <a href="https://ticketer.com/admin-dashboard" style="color: #1a73e8; text-decoration: underline;">admin dashboard</a>.</p>
           </td>

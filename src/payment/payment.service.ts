@@ -48,8 +48,10 @@ export class PaymentService {
       const txn = await tx.transaction.findUnique({
         where: { reference },
         include: {
-          event: { include: { organizer: true } },
-          tickets: { include: { ticket: true } },
+          event: { include: { organizer: true, ticketCategories: true } },
+          tickets: {
+            include: { ticket: { include: { ticketCategory: true } } },
+          },
           user: true,
         },
       });
@@ -67,9 +69,12 @@ export class PaymentService {
     });
   }
 
-  private async updateEventMintedCount(eventId: string, ticketCount: number) {
-    await this.prisma.event.update({
-      where: { id: eventId },
+  private async updateTicketCategoryMintedCount(
+    ticketCategoryId: string,
+    ticketCount: number,
+  ) {
+    await this.prisma.ticketCategory.update({
+      where: { id: ticketCategoryId },
       data: { minted: { increment: ticketCount } },
     });
   }
@@ -91,6 +96,7 @@ export class PaymentService {
 
   private async createTicketsForPurchase(
     txn: any,
+    ticketCategoryId: string,
     ticketCount: number,
   ): Promise<string[]> {
     const ticketIds: string[] = [];
@@ -99,6 +105,7 @@ export class PaymentService {
         data: {
           userId: txn.userId,
           eventId: txn.eventId,
+          ticketCategoryId,
           code: await this.generateUniqueTicketCode(),
         },
       });
@@ -121,8 +128,7 @@ export class PaymentService {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
-  private async generateTicketDetails(
+  private generateTicketDetails(
     tickets: any[],
     eventId: string,
     userId: string,
@@ -133,6 +139,7 @@ export class PaymentService {
       return {
         ticketId: ticket.id,
         code: ticket.code,
+        categoryName: ticket.ticketCategory?.name || 'Unknown',
         qrData: {
           ticketId: ticket.id,
           eventId,
@@ -174,6 +181,7 @@ export class PaymentService {
           txn.event.name,
           ticketDetails.length,
           txn.amount - platformCut,
+          ticketDetails.map((td) => td.categoryName),
         ),
         platformAdmin &&
           this.mailService.sendTicketPurchaseAdminMail(
@@ -183,6 +191,7 @@ export class PaymentService {
             ticketDetails.length,
             platformCut,
             txn.user.name,
+            ticketDetails.map((td) => td.categoryName),
           ),
       ]);
     } catch (err) {
@@ -197,18 +206,38 @@ export class PaymentService {
       );
     }
 
-    const ticketCount =
-      ticketIds.length ||
-      (txn.event?.price ? Math.floor(txn.amount / txn.event.price) : 0);
-    if (ticketCount === 0)
-      throw new BadRequestException('No tickets to process');
-
-    if (ticketIds.length === 0) {
-      ticketIds = await this.createTicketsForPurchase(txn, ticketCount);
-      await this.linkTicketsToTransaction(txn.reference, ticketIds);
+    if (!ticketIds.length) {
+      throw new BadRequestException('No ticket IDs provided for transaction');
     }
 
-    await this.updateEventMintedCount(txn.eventId, ticketIds.length);
+    const tickets = await this.prisma.ticket.findMany({
+      where: { id: { in: ticketIds } },
+      include: { ticketCategory: true },
+    });
+
+    if (tickets.length !== ticketIds.length) {
+      throw new NotFoundException('One or more tickets not found');
+    }
+
+    const ticketCategoryId = tickets[0].ticketCategoryId;
+    if (
+      !ticketCategoryId ||
+      tickets.some((t) => t.ticketCategoryId !== ticketCategoryId)
+    ) {
+      throw new BadRequestException(
+        'All tickets must belong to the same category',
+      );
+    }
+
+    const ticketCategory = await this.prisma.ticketCategory.findUnique({
+      where: { id: ticketCategoryId },
+    });
+    if (!ticketCategory) {
+      throw new NotFoundException('Ticket category not found');
+    }
+
+    const ticketCount = ticketIds.length;
+    await this.updateTicketCategoryMintedCount(ticketCategoryId, ticketCount);
 
     const platformCut = Math.floor(
       (txn.amount * txn.event.primaryFeeBps) / 10000,
@@ -224,10 +253,7 @@ export class PaymentService {
       await this.upsertPlatformAdminWallet(platformAdmin.id, platformCut);
     }
 
-    const tickets = await this.prisma.ticket.findMany({
-      where: { id: { in: ticketIds } },
-    });
-    const ticketDetails = await this.generateTicketDetails(
+    const ticketDetails = this.generateTicketDetails(
       tickets,
       txn.eventId,
       txn.userId,
@@ -259,11 +285,7 @@ export class PaymentService {
           txn.user.email,
           txn.user.name,
           tickets[0].event.name,
-          await this.generateTicketDetails(
-            tickets,
-            tickets[0].event.id,
-            txn.userId,
-          ),
+          this.generateTicketDetails(tickets, tickets[0].event.id, txn.userId),
         ),
         this.mailService.sendTicketResaleSellerMail(
           seller.email,
@@ -271,6 +293,7 @@ export class PaymentService {
           tickets[0].event.name,
           tickets.length,
           sellerProceeds,
+          tickets.map((t) => t.ticketCategory?.name || 'Unknown'),
         ),
         organizer &&
           this.mailService.sendTicketResaleOrganizerMail(
@@ -279,6 +302,7 @@ export class PaymentService {
             tickets[0].event.name,
             tickets.length,
             organizerRoyalty,
+            tickets.map((t) => t.ticketCategory?.name || 'Unknown'),
           ),
         platformAdmin &&
           this.mailService.sendTicketResaleAdminMail(
@@ -289,6 +313,7 @@ export class PaymentService {
             platformCut,
             txn.user.name,
             seller.name,
+            tickets.map((t) => t.ticketCategory?.name || 'Unknown'),
           ),
       ]);
     } catch (err) {
@@ -304,7 +329,7 @@ export class PaymentService {
 
     const tickets = await this.prisma.ticket.findMany({
       where: { id: { in: ticketIds } },
-      include: { event: true, user: true },
+      include: { event: true, user: true, ticketCategory: true },
     });
     if (tickets.length !== ticketIds.length)
       throw new NotFoundException('One or more tickets not found');
