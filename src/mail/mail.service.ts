@@ -7,7 +7,7 @@ import {
   changePasswordTemplate,
   eventCreationTemplate,
 } from './templates';
-import { generateTicketQR, QRTicketData } from 'src/common/utils/qrCode.utils';
+import { generateTicketQR, QRTicketData } from '../common/utils/qrCode.utils';
 import {
   TicketDetails,
   ticketPurchaseAdminTemplate,
