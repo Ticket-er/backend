@@ -21,4 +21,12 @@ export class BuyNewDto {
   @Min(1, { message: 'You must buy at least 1 ticket' })
   @Max(10, { message: 'Quantity cannot exceed 10' })
   quantity: number;
+
+  @ApiProperty({
+    description: 'ID of the ticket category to purchase',
+    example: 'cat123',
+  })
+  @IsNotEmpty()
+  @IsString()
+  ticketCategoryId: string;
 }

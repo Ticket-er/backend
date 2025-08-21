@@ -24,13 +24,17 @@ export class EventService {
   private async findEventById(eventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      include: { ticketCategories: true },
     });
     if (!event) throw new NotFoundException('Event not found');
     return event;
   }
 
   private async findEventBySlug(slug: string) {
-    const event = await this.prisma.event.findUnique({ where: { slug } });
+    const event = await this.prisma.event.findUnique({
+      where: { slug },
+      include: { ticketCategories: true },
+    });
     if (!event) throw new NotFoundException('Event not found');
     return event;
   }
@@ -100,18 +104,17 @@ export class EventService {
       this.logger.warn('No file provided');
     }
 
+    if (!dto.ticketCategories || dto.ticketCategories.length === 0) {
+      throw new BadRequestException('At least one ticket category is required');
+    }
+
     const bannerUrl = await this.uploadBannerIfProvided(file);
     const slug = await this.generateUniqueSlug(dto.name);
 
     try {
-      const price = Number(dto.price);
-      const maxTickets = Number(dto.maxTickets);
-
       const event = await this.prisma.event.create({
         data: {
           name: dto.name,
-          price,
-          maxTickets,
           slug,
           description: dto.description || dto.name,
           organizerId: userId,
@@ -120,7 +123,15 @@ export class EventService {
           category: dto.category,
           isActive: true,
           bannerUrl,
+          ticketCategories: {
+            create: dto.ticketCategories.map((category) => ({
+              name: category.name,
+              price: Number(category.price),
+              maxTickets: Number(category.maxTickets),
+            })),
+          },
         },
+        include: { ticketCategories: true },
       });
 
       this.logger.log(`Event created with ID: ${event.id}`);
@@ -148,22 +159,54 @@ export class EventService {
       bannerUrl = event.bannerUrl;
     }
 
-    const price = dto.price !== undefined ? Number(dto.price) : event.price;
-    const maxTickets =
-      dto.maxTickets !== undefined ? Number(dto.maxTickets) : event.maxTickets;
+    const data: any = {
+      name: dto.name || event.name,
+      description: dto.description ?? event.description,
+      location: dto.location || event.location,
+      date: dto.date || event.date,
+      category: dto.category || event.category,
+      bannerUrl,
+    };
+
+    if (dto.ticketCategories) {
+      // Validate that all provided categories exist
+      for (const category of dto.ticketCategories) {
+        const existingCategory = event.ticketCategories.find(
+          (cat) => cat.id === category.id || cat.name === category.name,
+        );
+        if (!existingCategory) {
+          throw new BadRequestException(
+            `Ticket category with ID ${category.id || 'unknown'} or name ${category.name || 'unknown'} does not exist`,
+          );
+        }
+        if (existingCategory.minted > category.maxTickets) {
+          throw new BadRequestException(
+            `Cannot reduce maxTickets for category ${existingCategory.name} below minted tickets (${existingCategory.minted})`,
+          );
+        }
+      }
+
+      // Update existing categories
+      data.ticketCategories = {
+        update: dto.ticketCategories.map((category) => ({
+          where: {
+            id:
+              category.id ||
+              event.ticketCategories.find((cat) => cat.name === category.name)
+                ?.id,
+          },
+          data: {
+            price: Number(category.price),
+            maxTickets: Number(category.maxTickets),
+          },
+        })),
+      };
+    }
 
     return this.prisma.event.update({
       where: { id: eventId },
-      data: {
-        name: dto.name || event.name,
-        price,
-        description: dto.description ?? event.description,
-        maxTickets,
-        location: dto.location || event.location,
-        date: dto.date || event.date,
-        category: dto.category || event.category,
-        bannerUrl,
-      },
+      data,
+      include: { ticketCategories: true },
     });
   }
 
@@ -194,6 +237,7 @@ export class EventService {
   async getOrganizerEvents(userId: string) {
     const events = await this.prisma.event.findMany({
       where: { organizerId: userId },
+      include: { ticketCategories: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -211,12 +255,14 @@ export class EventService {
         organizer: {
           select: { name: true, email: true, profileImage: true },
         },
+        ticketCategories: true,
         tickets: {
           where: { isListed: true },
           select: {
             id: true,
             resalePrice: true,
             listedAt: true,
+            ticketCategory: { select: { name: true, price: true } },
             user: {
               select: {
                 id: true,
@@ -245,12 +291,14 @@ export class EventService {
         organizer: {
           select: { name: true, email: true, profileImage: true },
         },
+        ticketCategories: true,
         tickets: {
           where: { isListed: true },
           select: {
             id: true,
             resalePrice: true,
             listedAt: true,
+            ticketCategory: { select: { name: true, price: true } },
             user: {
               select: {
                 id: true,
@@ -285,17 +333,21 @@ export class EventService {
 
     return this.prisma.event.findMany({
       where: filters,
-      orderBy: { createdAt: 'desc' },
       include: {
         organizer: { select: { name: true, email: true } },
+        ticketCategories: true,
       },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   async getUserEvents(userId: string) {
     const tickets = await this.prisma.ticket.findMany({
       where: { userId },
-      include: { event: true },
+      include: {
+        event: true,
+        ticketCategory: { select: { name: true, price: true } },
+      },
     });
 
     const grouped = tickets.reduce(
@@ -308,7 +360,10 @@ export class EventService {
             ticketCount: 0,
           };
         }
-        acc[id].tickets.push(ticket);
+        acc[id].tickets.push({
+          ...ticket,
+          ticketCategory: ticket.ticketCategory,
+        });
         acc[id].ticketCount++;
         return acc;
       },
@@ -324,6 +379,7 @@ export class EventService {
         isActive: true,
         date: { gte: new Date() },
       },
+      include: { ticketCategories: true },
       orderBy: { date: 'asc' },
     });
   }
@@ -334,6 +390,7 @@ export class EventService {
         isActive: true,
         date: { lt: new Date() },
       },
+      include: { ticketCategories: true },
       orderBy: { date: 'desc' },
     });
   }

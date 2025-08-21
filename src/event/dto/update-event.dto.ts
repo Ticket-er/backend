@@ -1,45 +1,43 @@
-/* eslint-disable prettier/prettier */
-import { EventCategory } from '@prisma/client';
 import {
-  IsString,
-  IsNumber,
-  IsOptional,
-  IsNotEmpty,
-  MaxLength,
-  Min,
-  IsDate,
+  IsArray,
+  IsDateString,
   IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
 } from 'class-validator';
+import { EventCategory } from '@prisma/client';
 
 export class UpdateEventDto {
   @IsOptional()
-  @IsString({ message: 'Event name must be a string' })
-  @IsNotEmpty({ message: 'Event name cannot be empty' })
-  @MaxLength(100, { message: 'Event name is too long' })
+  @IsString()
   name?: string;
 
   @IsOptional()
-  @IsNumber({}, { message: 'Price must be a number' })
-  @Min(0, { message: 'Price must be at least 0' })
-  price?: number;
-
-  @IsOptional()
-  @IsNumber({}, { message: 'Max tickets must be a number' })
-  @Min(1, { message: 'There must be at least one ticket' })
-  maxTickets?: number;
-
-  @IsOptional()
-  @IsString({ message: 'Event description must be a string' })
-  @MaxLength(500, { message: 'Event description is too long' })
+  @IsString()
+  @MaxLength(500, {
+    message: 'Description can not exceed 500 words (approx 2500 characters).',
+  })
   description?: string;
 
   @IsOptional()
-  @IsString({ message: 'Location must be a string' })
-  location: string;
+  @IsString()
+  location?: string;
 
-  @IsEnum(EventCategory, { message: 'Invalid category' })
-  category: EventCategory;
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 
-  @IsDate({ message: 'Date must be valid' })
-  date: Date;
+  @IsOptional()
+  @IsEnum(EventCategory)
+  category?: EventCategory;
+
+  @IsOptional()
+  @IsArray()
+  ticketCategories?: {
+    id?: string; // Optional ID to match existing category
+    name?: string; // Optional name to match existing category
+    price: number;
+    maxTickets: number;
+  }[];
 }

@@ -17,7 +17,6 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBody,
-  ApiParam,
   ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
@@ -35,7 +34,7 @@ export class TicketController {
   @ApiOperation({
     summary: 'Verify a ticket (scan or code input)',
     description:
-      'Anyone can check if a ticket is valid or used. Only the organizer can mark it as used.',
+      'Anyone can check if a ticket is valid or used. Only the organiser can mark it as used. Returns ticket details including category.',
   })
   @ApiBody({
     schema: {
@@ -48,7 +47,36 @@ export class TicketController {
       required: ['eventId'],
     },
   })
-  @UseGuards(JwtGuard) // still protected
+  @ApiResponse({
+    status: 200,
+    description: 'Ticket verification result',
+    schema: {
+      type: 'object',
+      properties: {
+        ticketId: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+        code: { type: 'string', example: 'TCK-9X8B7Z' },
+        eventId: { type: 'string', example: 'clx81r0jk0000s1aofh4c4z3a' },
+        ticketCategory: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', example: 'VVIP' },
+            price: { type: 'number', example: 100 },
+          },
+        },
+        status: { type: 'string', enum: ['USED', 'VALID'] },
+        markedUsed: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Ticket marked as used' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request: Missing ticketId or code',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Ticket not found',
+  })
   verifyTicket(@Body() body, @Req() req) {
     return this.ticketService.verifyTicket({
       ...body,
@@ -58,38 +86,65 @@ export class TicketController {
 
   @UseGuards(JwtGuard)
   @Post('buy')
-  @UseGuards(JwtGuard)
-  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Buy a new ticket',
-    description: 'Purchases a new ticket for a specific event.',
-  })
-  @ApiParam({
-    name: 'eventId',
-    description: 'UUID of the event',
-    example: '123e4567-e89b-12d3-a456-426614174000',
+    description:
+      'Purchases a new ticket for a specific event and ticket category.',
   })
   @ApiBody({
-    description: 'Payload to specify how many tickets to buy',
+    description:
+      'Payload to specify event, ticket category, and quantity of tickets to buy',
     type: BuyNewDto,
+    schema: {
+      type: 'object',
+      properties: {
+        eventId: {
+          type: 'string',
+          example: '123e4567-e89b-12d3-a456-426614174000',
+        },
+        ticketCategoryId: {
+          type: 'string',
+          example: 'clx81wekg0000ueaom6b8x7ti',
+          description: 'UUID of the ticket category (e.g., VVIP, VIP, Regular)',
+        },
+        quantity: { type: 'number', example: 2 },
+      },
+      required: ['eventId', 'ticketCategoryId', 'quantity'],
+    },
   })
   @ApiResponse({
     status: 201,
-    description: 'Ticket purchase initiated, returns checkout URL',
+    description:
+      'Ticket purchase initiated, returns checkout URL or free ticket confirmation',
     schema: {
       type: 'object',
       properties: {
         checkoutUrl: {
           type: 'string',
           example: 'https://checkout.kora.com/pay/abc123',
+          nullable: true,
+        },
+        message: {
+          type: 'string',
+          example: 'Free tickets created successfully',
+          nullable: true,
+        },
+        ticketIds: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['clx81wekg0000ueaom6b8x7ti', 'clx81wekg0001ueaom6b8x7ti'],
+          nullable: true,
         },
       },
     },
   })
-  @ApiResponse({ status: 404, description: 'Event not found or inactive' })
   @ApiResponse({
     status: 400,
-    description: 'Invalid quantity or event expired',
+    description: 'Invalid quantity, category, or event expired',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Event or ticket category not found',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   buyNew(
@@ -102,7 +157,6 @@ export class TicketController {
 
   @Post('resale/buy')
   @UseGuards(JwtGuard)
-  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Buy resale tickets',
     description:
@@ -146,37 +200,43 @@ export class TicketController {
 
   @UseGuards(JwtGuard)
   @Post('resale/list')
-  @UseGuards(JwtGuard)
-  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'List multiple tickets for resale',
+    summary: 'List ticket for resale',
     description: 'Lists one ticket for resale by the authenticated user.',
   })
   @ApiBody({ type: ListResaleDto })
   @ApiResponse({
     status: 200,
-    description: 'Tickets listed for resale successfully',
+    description: 'Ticket listed for resale successfully',
     schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          resalePrice: { type: 'number' },
-          listedAt: { type: 'string', format: 'date-time' },
-          isListed: { type: 'boolean' },
+      type: 'object',
+      properties: {
+        id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+        resalePrice: { type: 'number', example: 120 },
+        listedAt: {
+          type: 'string',
+          format: 'date-time',
+          example: '2025-08-21T14:50:00Z',
+        },
+        isListed: { type: 'boolean', example: true },
+        ticketCategory: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', example: 'VVIP' },
+            price: { type: 'number', example: 100 },
+          },
         },
       },
     },
   })
   @ApiResponse({
     status: 404,
-    description: 'One or more tickets not found or not owned by user',
+    description: 'Ticket not found or not owned by user',
   })
   @ApiResponse({
     status: 400,
     description:
-      'Tickets already used, already listed, or cannot be resold again',
+      'Ticket already used, already listed, or cannot be resold again',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   listForResale(@Body() dto: ListResaleDto, @Req() req) {
@@ -185,7 +245,6 @@ export class TicketController {
 
   @UseGuards(JwtGuard)
   @Post('resale/remove')
-  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Remove ticket from resale',
     description:
@@ -198,10 +257,22 @@ export class TicketController {
     schema: {
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        resalePrice: { type: 'number', nullable: true },
-        listedAt: { type: 'string', format: 'date-time', nullable: true },
-        isListed: { type: 'boolean' },
+        id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+        resalePrice: { type: 'number', nullable: true, example: null },
+        listedAt: {
+          type: 'string',
+          format: 'date-time',
+          nullable: true,
+          example: null,
+        },
+        isListed: { type: 'boolean', example: false },
+        ticketCategory: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', example: 'VVIP' },
+            price: { type: 'number', example: 100 },
+          },
+        },
       },
     },
   })
@@ -222,7 +293,7 @@ export class TicketController {
   @ApiOperation({
     summary: 'Browse resale tickets',
     description:
-      'Retrieves tickets listed for resale, optionally filtered by event ID.',
+      'Retrieves tickets listed for resale, optionally filtered by event ID, including ticket category details.',
   })
   @ApiQuery({
     name: 'eventId',
@@ -233,12 +304,42 @@ export class TicketController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of resale tickets',
-    type: [Object],
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized: JWT token missing or invalid',
+    description: 'List of resale tickets with category details',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+          resalePrice: { type: 'number', example: 120 },
+          listedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2025-08-21T14:50:00Z',
+          },
+          event: {
+            type: 'object',
+            properties: { name: { type: 'string', example: 'Music Festival' } },
+          },
+          user: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              email: { type: 'string' },
+              profileImage: { type: 'string', nullable: true },
+            },
+          },
+          ticketCategory: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', example: 'VVIP' },
+              price: { type: 'number', example: 100 },
+            },
+          },
+        },
+      },
+    },
   })
   browseResale(@Query('eventId') eventId?: string) {
     return this.ticketService.getResaleTickets(eventId);
@@ -249,12 +350,37 @@ export class TicketController {
   @ApiOperation({
     summary: 'Get my resale listings',
     description:
-      'Retrieves all tickets listed for resale by the authenticated user.',
+      'Retrieves all tickets listed for resale by the authenticated user, including ticket category details.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of user’s resale tickets',
-    type: [Object],
+    description: 'List of user’s resale tickets with category details',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+          resalePrice: { type: 'number', example: 120 },
+          listedAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2025-08-21T14:50:00Z',
+          },
+          event: {
+            type: 'object',
+            properties: { name: { type: 'string', example: 'Music Festival' } },
+          },
+          ticketCategory: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', example: 'VVIP' },
+              price: { type: 'number', example: 100 },
+            },
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 401,
@@ -264,16 +390,40 @@ export class TicketController {
     return this.ticketService.getMyListings(req.user.sub);
   }
 
+  @UseGuards(JwtGuard)
   @Get('bought-from-resale')
   @ApiOperation({
     summary: 'Get tickets bought from resale',
     description:
-      'Retrieves all tickets purchased from resale by the authenticated user.',
+      'Retrieves all tickets purchased from resale by the authenticated user, including ticket category details.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of tickets bought from resale',
-    type: [Object],
+    description: 'List of tickets bought from resale with category details',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+          event: {
+            type: 'object',
+            properties: { name: { type: 'string', example: 'Music Festival' } },
+          },
+          user: {
+            type: 'object',
+            properties: { id: { type: 'string' }, name: { type: 'string' } },
+          },
+          ticketCategory: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', example: 'VVIP' },
+              price: { type: 'number', example: 100 },
+            },
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 401,
@@ -287,12 +437,32 @@ export class TicketController {
   @Get('my')
   @ApiOperation({
     summary: 'Get my tickets',
-    description: 'Retrieves all tickets owned by the authenticated user.',
+    description:
+      'Retrieves all tickets owned by the authenticated user, including ticket category details.',
   })
   @ApiResponse({
     status: 200,
-    description: 'List of user’s tickets',
-    type: [Object],
+    description: 'List of user’s tickets with category details',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: 'clx81wekg0000ueaom6b8x7ti' },
+          event: {
+            type: 'object',
+            properties: { name: { type: 'string', example: 'Music Festival' } },
+          },
+          ticketCategory: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', example: 'VVIP' },
+              price: { type: 'number', example: 100 },
+            },
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 401,

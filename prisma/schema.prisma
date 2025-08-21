@@ -1,7 +1,3 @@
-/// ───────────────────────────────────────────────────────────
-/// Add to your existing schema.prisma
-/// ───────────────────────────────────────────────────────────
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -51,41 +47,35 @@ model Event {
   description String?
   location    String?
   category    EventCategory
-  price       Int
   slug        String     @unique
-  maxTickets  Int
-  minted      Int        @default(0)
   isActive    Boolean    @default(true)
   date        DateTime
   organizer   User       @relation(fields: [organizerId], references: [id])
   organizerId String
   createdAt   DateTime   @default(now())
 
-  primaryFeeBps     Int    @default(350)   // 5 % on first sale
-  resaleFeeBps      Int    @default(350)   // 5 % platform fee on resale
-  royaltyFeeBps     Int    @default(1000)   // 5 % organizer royalty on resale
+  primaryFeeBps     Int    @default(350)   // 5% on first sale
+  resaleFeeBps      Int    @default(350)   // 5% platform fee on resale
+  royaltyFeeBps     Int    @default(1000)   // 5% organizer royalty on resale
 
   tickets     Ticket[]
+  ticketCategories TicketCategory[] // New relation for ticket categories
   transactions Transaction[] // all purchase/resale txns for this event
 }
 
-enum EventCategory {
-  MUSIC
-  CONCERT
-  CONFERENCE
-  WORKSHOP
-  SPORTS
-  COMEDY
-  THEATRE
-  FESTIVAL
-  EXHIBITION
-  RELIGION
-  NETWORKING
-  TECH
-  FASHION
-  PARTY
-}
+model TicketCategory {
+  id          String    @id @default(cuid())
+  name        String    // e.g., VVIP, VIP, Regular
+  price       Int       // Price for this category
+  maxTickets  Int       // Maximum tickets available for this category
+  minted      Int       @default(0) // Number of tickets issued
+  event       Event     @relation(fields: [eventId], references: [id])
+  eventId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
+  tickets     Ticket[]  // Tickets associated with this category
+}
 
 model Ticket {
   id               String     @id @default(cuid())
@@ -100,6 +90,9 @@ model Ticket {
   event            Event      @relation(fields: [eventId], references: [id])
   eventId          String
 
+  ticketCategory   TicketCategory? @relation(fields: [ticketCategoryId], references: [id])
+  ticketCategoryId String?    // Optional, links to ticket category
+
   isUsed           Boolean    @default(false)
   isListed         Boolean    @default(false)
   resalePrice      Int?
@@ -109,8 +102,6 @@ model Ticket {
   resaleCommission Int?       
 
   createdAt        DateTime   @default(now())
-
-
 
   TransactionTicket TransactionTicket[]
 }
@@ -151,10 +142,26 @@ enum TransactionStatus {
   FAILED
 }
 
-
 enum Role {
   USER
   ORGANIZER
   ADMIN
   SUPERADMIN
+}
+
+enum EventCategory {
+  MUSIC
+  CONCERT
+  CONFERENCE
+  WORKSHOP
+  SPORTS
+  COMEDY
+  THEATRE
+  FESTIVAL
+  EXHIBITION
+  RELIGION
+  NETWORKING
+  TECH
+  FASHION
+  PARTY
 }

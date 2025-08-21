@@ -1,43 +1,43 @@
-/* eslint-disable prettier/prettier */
-import { EventCategory } from '@prisma/client';
 import {
-  IsString,
-  IsNumber,
-  IsNotEmpty,
-  Min,
-  MaxLength,
-  IsDate,
+  IsArray,
+  IsDateString,
   IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
 } from 'class-validator';
+import { EventCategory } from '@prisma/client';
 
 export class CreateEventDto {
-  @IsString({ message: 'Event name must be a string' })
-  @IsNotEmpty({ message: 'Event name is required' })
-  @MaxLength(100, {
-    message: 'Event name cannot be longer than 100 characters',
-  })
+  @IsNotEmpty()
+  @IsString()
   name: string;
 
-  @IsNumber({}, { message: 'Ticket price must be a number' })
-  @Min(0, { message: 'Ticket price must be at least 0 (free or paid)' })
-  price: number;
-
-  @IsNumber({}, { message: 'Maximum number of tickets must be a number' })
-  @Min(1, { message: 'There must be at least one ticket for an event' })
-  maxTickets: number;
-
-  @IsString({ message: 'Location must be a string' })
-  location: string;
-
-  @IsString({ message: 'Event description must be a string' })
+  @IsOptional()
+  @IsString()
   @MaxLength(500, {
-    message: 'Event description cannot be longer than 500 characters',
+    message: 'Description can not exceed 500 words (approx 2500 characters).',
   })
-  description?: string;
+  description: string;
 
-  @IsEnum(EventCategory, { message: 'Invalid category' })
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsNotEmpty()
+  @IsDateString()
+  date: string;
+
+  @IsNotEmpty()
+  @IsEnum(EventCategory)
   category: EventCategory;
 
-  @IsDate({ message: 'Date must be valid' })
-  date: Date;
+  @IsArray()
+  @IsNotEmpty()
+  ticketCategories: {
+    name: string;
+    price: number;
+    maxTickets: number;
+  }[];
 }

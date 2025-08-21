@@ -68,79 +68,117 @@ async function main() {
           name: `Music Festival ${i + 1}`,
           category: 'MUSIC',
           slug: `music-festival-${i + 1}`,
-          price: 2000 + i * 1000,
-          maxTickets: 50,
           description:
             'Join us for the biggest music festival of the summer featuring top artists from around the world. Experience three days of non-stop music, food, and fun in the heart of Central Park.',
           location: 'Central Park, New York, NY',
           date: new Date(`2025-08-${10 + i}T20:00:00Z`),
           organizerId: organizer.id,
+          primaryFeeBps: 1000, // 10% platform fee
+          resaleFeeBps: 500, // 5% resale fee
+          royaltyFeeBps: 200, // 2% royalty fee
+          ticketCategories: {
+            create: [
+              {
+                name: 'VVIP',
+                price: 5000 + i * 1000,
+                maxTickets: 10,
+                minted: 0,
+              },
+              {
+                name: 'VIP',
+                price: 3000 + i * 1000,
+                maxTickets: 20,
+                minted: 0,
+              },
+              {
+                name: 'Regular',
+                price: 1000 + i * 1000,
+                maxTickets: 20,
+                minted: 0,
+              },
+            ],
+          },
         },
       }),
     ),
   );
 
-  console.log('🎉 Created multiple events');
+  console.log('🎉 Created multiple events with ticket categories');
 
-  for (const [i, event] of events.entries()) {
-    for (let j = 0; j < event.maxTickets; j++) {
-      const buyer = j % 2 === 0 ? user1 : user2;
+  for (const event of events) {
+    const ticketCategories = await prisma.ticketCategory.findMany({
+      where: { eventId: event.id },
+    });
 
-      // Get fresh event data to check minted count
-      const updatedEvent = await prisma.event.findUnique({
-        where: { id: event.id },
-      });
+    for (const category of ticketCategories) {
+      const ticketsPerCategory = Math.min(category.maxTickets, 10); // Limit to 10 tickets per category for seeding
+      for (let j = 0; j < ticketsPerCategory; j++) {
+        const buyer = j % 2 === 0 ? user1 : user2;
 
-      if (!updatedEvent || updatedEvent.minted >= updatedEvent.maxTickets) {
-        console.warn(`❌ Max tickets minted for event: ${event.name}`);
-        break;
-      }
+        // Get fresh category data to check minted count
+        const updatedCategory = await prisma.ticketCategory.findUnique({
+          where: { id: category.id },
+        });
 
-      // Mint ticket
-      const ticket = await prisma.ticket.create({
-        data: {
-          code: `EVT${i + 1}_TKT${j + 1}`,
-          userId: buyer.id,
-          eventId: event.id,
-        },
-      });
+        if (
+          !updatedCategory ||
+          updatedCategory.minted >= updatedCategory.maxTickets
+        ) {
+          console.warn(
+            `❌ Max tickets minted for category ${category.name} in event: ${event.name}`,
+          );
+          continue;
+        }
 
-      // Update minted count
-      await prisma.event.update({
-        where: { id: event.id },
-        data: { minted: { increment: 1 } },
-      });
-
-      // Create primary purchase transaction
-      await prisma.transaction.create({
-        data: {
-          reference: `txn_evt${i + 1}_${j + 1}`,
-          userId: buyer.id,
-          eventId: event.id,
-          type: 'PURCHASE',
-          amount: event.price,
-          status: 'SUCCESS',
-          tickets: {
-            create: [{ ticketId: ticket.id }],
-          },
-        },
-      });
-
-      // Only list ticket (no resale transaction or owner change)
-      if (j % 10 === 0) {
-        await prisma.ticket.update({
-          where: { id: ticket.id },
+        // Mint ticket
+        const ticket = await prisma.ticket.create({
           data: {
-            isListed: true,
-            resalePrice: event.price + 500,
-            listedAt: new Date(),
-            resaleCommission: Math.floor((event.price + 500) * 0.05),
+            code: `EVT${event.id.slice(0, 8)}_TKT${j + 1}_${category.name}`,
+            userId: buyer.id,
+            eventId: event.id,
+            ticketCategoryId: category.id,
           },
         });
-      }
-    }
 
-    console.log(`🎟️ Minted and listed tickets for Event: ${event.name}`);
+        // Update minted count for the category
+        await prisma.ticketCategory.update({
+          where: { id: category.id },
+          data: { minted: { increment: 1 } },
+        });
+
+        // Create primary purchase transaction
+        await prisma.transaction.create({
+          data: {
+            reference: `txn_evt${event.id.slice(0, 8)}_cat${category.id.slice(0, 8)}_${j + 1}`,
+            userId: buyer.id,
+            eventId: event.id,
+            type: 'PURCHASE',
+            amount: category.price,
+            status: 'SUCCESS',
+            tickets: {
+              create: [{ ticketId: ticket.id }],
+            },
+          },
+        });
+
+        // Only list ticket (no resale transaction or owner change)
+        if (j % 5 === 0) {
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              isListed: true,
+              resalePrice: category.price + 500,
+              listedAt: new Date(),
+              resaleCommission: Math.floor((category.price + 500) * 0.05),
+            },
+          });
+        }
+      }
+
+      console.log(
+        `🎟️ Minted and listed tickets for Category: ${category.name} in Event: ${event.name}`,
+      );
+    }
   }
 
   console.log('🌱 Full seed complete!');

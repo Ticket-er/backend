@@ -25,6 +25,7 @@ export class TicketService {
   private async validateEvent(eventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      include: { ticketCategories: true },
     });
     if (!event || !event.isActive) {
       this.logger.warn(`Event ${eventId} not found or inactive`);
@@ -50,16 +51,37 @@ export class TicketService {
     return user;
   }
 
+  private async validateTicketCategory(
+    ticketCategoryId: string,
+    eventId: string,
+  ) {
+    const ticketCategory = await this.prisma.ticketCategory.findFirst({
+      where: { id: ticketCategoryId, eventId },
+    });
+    if (!ticketCategory) {
+      this.logger.warn(
+        `Ticket category ${ticketCategoryId} not found for event ${eventId}`,
+      );
+      throw new NotFoundException('Ticket category not found');
+    }
+    if (ticketCategory.minted >= ticketCategory.maxTickets) {
+      this.logger.warn(`No tickets available for category ${ticketCategoryId}`);
+      throw new BadRequestException('No tickets available for this category');
+    }
+    return ticketCategory;
+  }
+
   private async createTickets(
     userId: string,
     eventId: string,
+    ticketCategoryId: string,
     quantity: number,
   ): Promise<string[]> {
     const ticketIds: string[] = [];
     for (let i = 0; i < quantity; i++) {
       const code = await this.paymentService.generateUniqueTicketCode();
       const ticket = await this.prisma.ticket.create({
-        data: { userId, eventId, code },
+        data: { userId, eventId, ticketCategoryId, code },
       });
       ticketIds.push(ticket.id);
     }
@@ -94,9 +116,12 @@ export class TicketService {
     totalAmount: number,
     reference: string,
     ticketIds: string[],
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     clientPage: string,
   ): Promise<string> {
+    let redirectUrl: string | undefined = undefined;
+    if (process.env.FRONTEND_URL) {
+      redirectUrl = `${process.env.FRONTEND_URL}` + clientPage;
+    }
     const checkoutUrl = await this.paymentService.initiatePayment({
       customer: { email: user.email, name: user.name },
       amount: totalAmount,
@@ -105,7 +130,7 @@ export class TicketService {
       processor: 'kora',
       narration: `Tickets for ${event.name}`,
       notification_url: process.env.NOTIFICATION_URL,
-      // redirect_url: `${process.env.FRONTEND_URL}` + clientPage,
+      redirect_url: redirectUrl,
       metadata: { ticketIds },
     });
     if (!checkoutUrl)
@@ -121,8 +146,7 @@ export class TicketService {
     await this.prisma.transaction.delete({ where: { reference } });
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
-  private async validateResaleTickets(
+  private validateResaleTickets(
     tickets: any[],
     ticketIds: string[],
     userId: string,
@@ -170,28 +194,41 @@ export class TicketService {
     );
 
     const event = await this.validateEvent(dto.eventId);
-    if (event.minted + dto.quantity > event.maxTickets) {
-      this.logger.warn(`Not enough tickets for event ${dto.eventId}`);
-      throw new BadRequestException('Not enough tickets available');
+    const ticketCategory = await this.validateTicketCategory(
+      dto.ticketCategoryId,
+      dto.eventId,
+    );
+    if (ticketCategory.minted + dto.quantity > ticketCategory.maxTickets) {
+      this.logger.warn(
+        `Not enough tickets for category ${dto.ticketCategoryId}`,
+      );
+      throw new BadRequestException(
+        'Not enough tickets available in this category',
+      );
     }
     const user = await this.validateUser(userId, event);
 
-    const totalAmount = event.price * dto.quantity;
+    const totalAmount = ticketCategory.price * dto.quantity;
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     let ticketIds: string[];
     try {
-      ticketIds = await this.createTickets(userId, dto.eventId, dto.quantity);
+      ticketIds = await this.createTickets(
+        userId,
+        dto.eventId,
+        dto.ticketCategoryId,
+        dto.quantity,
+      );
     } catch (err) {
       this.logger.error(
-        `Ticket creation failed for event ${dto.eventId}`,
+        `Ticket creation failed for event ${dto.eventId}, category ${dto.ticketCategoryId}`,
         err.stack,
       );
       throw new BadRequestException('Error while creating tickets');
     }
 
     try {
-      if (event.price === 0) {
+      if (ticketCategory.price === 0) {
         // Free event: Skip payment, create transaction with SUCCESS status
         await this.createTransaction(
           reference,
@@ -202,8 +239,8 @@ export class TicketService {
           'SUCCESS',
           ticketIds,
         );
-        await this.prisma.event.update({
-          where: { id: dto.eventId },
+        await this.prisma.ticketCategory.update({
+          where: { id: dto.ticketCategoryId },
           data: { minted: { increment: ticketIds.length } },
         });
         return {
@@ -254,7 +291,11 @@ export class TicketService {
           isListed: true,
           resalePrice: { not: null },
         },
-        include: { event: true, user: true },
+        include: {
+          event: true,
+          user: true,
+          ticketCategory: { select: { name: true, price: true } },
+        },
       });
 
       const eventId = await this.validateResaleTickets(
@@ -326,7 +367,10 @@ export class TicketService {
     return this.prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.findFirst({
         where: { id: ticketId, userId },
-        include: { event: true },
+        include: {
+          event: true,
+          ticketCategory: { select: { name: true, price: true } },
+        },
       });
       if (!ticket) {
         throw new NotFoundException('Ticket not found or not owned by user');
@@ -382,7 +426,10 @@ export class TicketService {
     return this.prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.findFirst({
         where: { id: ticketId, userId },
-        include: { event: true },
+        include: {
+          event: true,
+          ticketCategory: { select: { name: true, price: true } },
+        },
       });
       if (!ticket) {
         throw new NotFoundException('Ticket not found or not owned by user');
@@ -436,6 +483,7 @@ export class TicketService {
         user: {
           select: { id: true, name: true, email: true, profileImage: true },
         },
+        ticketCategory: { select: { name: true, price: true } },
       },
       orderBy: { listedAt: 'desc' },
     });
@@ -444,7 +492,10 @@ export class TicketService {
   async getMyListings(userId: string) {
     return this.prisma.ticket.findMany({
       where: { userId, isListed: true },
-      include: { event: true },
+      include: {
+        event: true,
+        ticketCategory: { select: { name: true, price: true } },
+      },
       orderBy: { listedAt: 'desc' },
     });
   }
@@ -452,7 +503,11 @@ export class TicketService {
   async getBoughtFromResale(userId: string) {
     return this.prisma.ticket.findMany({
       where: { soldTo: userId },
-      include: { event: true, user: { select: { id: true, name: true } } },
+      include: {
+        event: true,
+        user: { select: { id: true, name: true } },
+        ticketCategory: { select: { name: true, price: true } },
+      },
       orderBy: { listedAt: 'desc' },
     });
   }
@@ -463,7 +518,10 @@ export class TicketService {
         userId,
         TransactionTicket: { some: { transaction: { status: 'SUCCESS' } } },
       },
-      include: { event: true },
+      include: {
+        event: true,
+        ticketCategory: { select: { name: true, price: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -482,7 +540,10 @@ export class TicketService {
 
     const ticket = await this.prisma.ticket.findFirst({
       where: { eventId, ...(ticketId ? { id: ticketId } : { code }) },
-      include: { event: true },
+      include: {
+        event: true,
+        ticketCategory: { select: { name: true, price: true } },
+      },
     });
     if (!ticket) throw new NotFoundException('Ticket not found');
 
@@ -501,6 +562,7 @@ export class TicketService {
       ticketId: ticket.id,
       code: ticket.code,
       eventId: ticket.eventId,
+      ticketCategory: ticket.ticketCategory,
       status: ticket.isUsed ? 'USED' : 'VALID',
       markedUsed: updated,
       message: ticket.isUsed

@@ -88,12 +88,18 @@ export class MailService {
     email: string,
     name: string,
     event: string,
-    tickets: { ticketId: string; code: string; qrData: QRTicketData }[],
+    tickets: {
+      ticketId: string;
+      code: string;
+      qrData: QRTicketData;
+      categoryName: string;
+    }[],
   ) {
     const ticketDetails: TicketDetails[] = await Promise.all(
-      tickets.map(async ({ ticketId, code, qrData }) => ({
+      tickets.map(async ({ ticketId, code, qrData, categoryName }) => ({
         ticketId,
         code,
+        categoryName,
         qrCodeDataUrl: await generateTicketQR(qrData),
       })),
     );
@@ -111,11 +117,18 @@ export class MailService {
     event: string,
     ticketCount: number,
     proceeds: number,
+    ticketCategories: string[],
   ) {
     await this.sendMail(
       email,
       'New Ticket Sale for Your Event 🎉',
-      ticketPurchaseOrganizerTemplate(name, event, ticketCount, proceeds),
+      ticketPurchaseOrganizerTemplate(
+        name,
+        event,
+        ticketCount,
+        proceeds,
+        ticketCategories,
+      ),
     );
   }
 
@@ -126,6 +139,7 @@ export class MailService {
     ticketCount: number,
     platformCut: number,
     buyerName: string,
+    ticketCategories: string[],
   ) {
     await this.sendMail(
       email,
@@ -136,6 +150,7 @@ export class MailService {
         ticketCount,
         platformCut,
         buyerName,
+        ticketCategories,
       ),
     );
   }
@@ -144,12 +159,18 @@ export class MailService {
     email: string,
     name: string,
     event: string,
-    tickets: { ticketId: string; code: string; qrData: QRTicketData }[],
+    tickets: {
+      ticketId: string;
+      code: string;
+      qrData: QRTicketData;
+      categoryName: string;
+    }[],
   ) {
     const ticketDetails: TicketDetails[] = await Promise.all(
-      tickets.map(async ({ ticketId, code, qrData }) => ({
+      tickets.map(async ({ ticketId, code, qrData, categoryName }) => ({
         ticketId,
         code,
+        categoryName,
         qrCodeDataUrl: await generateTicketQR(qrData),
       })),
     );
@@ -167,11 +188,18 @@ export class MailService {
     event: string,
     ticketCount: number,
     proceeds: number,
+    ticketCategories: string[],
   ) {
     await this.sendMail(
       email,
       'Your Ticket Has Been Sold 💸',
-      ticketResaleSellerTemplate(name, event, ticketCount, proceeds),
+      ticketResaleSellerTemplate(
+        name,
+        event,
+        ticketCount,
+        proceeds,
+        ticketCategories,
+      ),
     );
   }
 
@@ -181,11 +209,18 @@ export class MailService {
     event: string,
     ticketCount: number,
     royalty: number,
+    ticketCategories: string[],
   ) {
     await this.sendMail(
       email,
       'Resale Royalty for Your Event',
-      ticketResaleOrganizerTemplate(name, event, ticketCount, royalty),
+      ticketResaleOrganizerTemplate(
+        name,
+        event,
+        ticketCount,
+        royalty,
+        ticketCategories,
+      ),
     );
   }
 
@@ -197,6 +232,7 @@ export class MailService {
     platformCut: number,
     buyerName: string,
     sellerName: string,
+    ticketCategories: string[],
   ) {
     await this.sendMail(
       email,
@@ -208,6 +244,7 @@ export class MailService {
         platformCut,
         buyerName,
         sellerName,
+        ticketCategories,
       ),
     );
   }
