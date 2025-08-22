@@ -6,16 +6,16 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS with debugging
+  // Enable CORS with dynamic origin
   const allowedOrigins = [
     'http://localhost:3000',
     'https://ticketer-app-staging.vercel.app',
   ];
   app.enableCors({
     origin: (origin, callback) => {
-      console.log('Request Origin:', origin); // Debug origin
+      console.log('Request Origin:', origin); // Debug
       if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
+        callback(null, origin || '*'); // Return the request's origin or '*' if no origin
       } else {
         callback(new Error('Not allowed by CORS'));
       }
@@ -25,22 +25,25 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Explicitly handle OPTIONS requests
+  // Explicitly handle OPTIONS requests (optional, for robustness)
   app.use((req, res, next) => {
     if (req.method === 'OPTIONS') {
       console.log('Handling OPTIONS request for:', req.url); // Debug
-      res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-      res.setHeader(
-        'Access-Control-Allow-Methods',
-        'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-      );
-      res.setHeader(
-        'Access-Control-Allow-Headers',
-        'Content-Type,Authorization,X-Requested-With,x-client-page',
-      );
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.status(204).send();
-      return;
+      const origin = req.headers.origin;
+      if (!origin || allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+        res.setHeader(
+          'Access-Control-Allow-Methods',
+          'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+        );
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'Content-Type,Authorization,X-Requested-With,x-client-page',
+        );
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.status(204).send();
+        return;
+      }
     }
     next();
   });
