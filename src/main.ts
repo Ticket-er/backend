@@ -12,7 +12,9 @@ async function bootstrap() {
       'http://localhost:3000', // Local development
       'https://ticketer-app-staging.vercel.app', // Your deployed frontend
     ],
-    credentials: true, // Allow sending cookies/headers with requests
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type,Authorization,X-Requested-With,x-client-page',
+    credentials: true,
   });
 
   app.useGlobalPipes(
