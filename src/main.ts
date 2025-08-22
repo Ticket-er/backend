@@ -10,7 +10,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:3000', // Local development
-      'https://ticketer.vercel.app', // Your deployed frontend
+      'https://ticketer-app-staging.vercel.app', // Your deployed frontend
     ],
     credentials: true, // Allow sending cookies/headers with requests
   });
