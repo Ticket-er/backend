@@ -74,7 +74,7 @@ model TicketCategory {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  tickets     Ticket[]  // Tickets associated with this category
+  tickets     Ticket[]  
 }
 
 model Ticket {
