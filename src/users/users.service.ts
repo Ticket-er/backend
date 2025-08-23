@@ -58,7 +58,7 @@ export class UserService {
       return uploadedImageUrl;
     } catch (err) {
       this.logger.error(`Image upload failed: ${err.message}`);
-      throw new InternalServerErrorException('Failed to upload event banner');
+      throw new InternalServerErrorException('Failed to upload profile image');
     }
   }
 
@@ -80,6 +80,21 @@ export class UserService {
   // =====================
   // PUBLIC METHODS
   // =====================
+
+  async getCurrentUser(userId: string) {
+    this.logger.log(`Fetching user with ID: ${userId}`);
+    const user = await this.findUserById(userId);
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        profileImage: user.profileImage,
+        isVerified: user.isVerified,
+      },
+    };
+  }
 
   async updateUser(
     userId: string,
@@ -109,7 +124,17 @@ export class UserService {
 
     this.logger.log(`User updated successfully: ${userId}`);
 
-    return { message: 'Profile updated successfully', user: updatedUser };
+    return {
+      message: 'Profile updated successfully',
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        role: updatedUser.role,
+        profileImage: updatedUser.profileImage,
+        isVerified: updatedUser.isVerified,
+      },
+    };
   }
 
   async becomeOrganizer(email: string) {
