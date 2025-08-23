@@ -417,38 +417,37 @@ export class PaymentService {
 
   // Payment Initiation
   async initiatePayment(data: InitiateDto): Promise<string> {
-  this.logger.log(
-    `💡 Sending payment initiation request to gateway:\n${JSON.stringify(data, null, 2)}`
-  );
+    this.logger.log(
+      `💡 Sending payment initiation request to gateway:\n${JSON.stringify(data, null, 2)}`,
+    );
 
-  let response;
-  try {
-    response = await this.callPaymentGateway<{ checkout_url?: string }>(
-      'post',
-      `${this.paymentBaseUrl}/api/v1/initiate`,
-      data,
+    let response;
+    try {
+      response = await this.callPaymentGateway<{ checkout_url?: string }>(
+        'post',
+        `${this.paymentBaseUrl}/api/v1/initiate`,
+        data,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Payment gateway request failed:\n${JSON.stringify(error.response?.data, null, 2)}\n${error.stack}`,
+      );
+      throw new InternalServerErrorException(
+        error?.response?.data?.message || 'Payment gateway request failed',
+      );
+    }
+
+    this.logger.log(
+      `💳 Payment gateway response:\n${JSON.stringify(response, null, 2)}`,
     );
-  } catch (error) {
-    this.logger.error(
-      `❌ Payment gateway request failed:\n${JSON.stringify(error.response?.data, null, 2)}\n${error.stack}`
-    );
-    throw new InternalServerErrorException(
-      error?.response?.data?.message || 'Payment gateway request failed',
-    );
+
+    if (!response.checkout_url) {
+      this.logger.error('❌ Payment gateway did not return a checkout_url');
+      throw new BadRequestException('Failed to initiate payment');
+    }
+
+    return response.checkout_url;
   }
-
-  this.logger.log(
-    `💳 Payment gateway response:\n${JSON.stringify(response, null, 2)}`
-  );
-
-  if (!response.checkout_url) {
-    this.logger.error('❌ Payment gateway did not return a checkout_url');
-    throw new BadRequestException('Failed to initiate payment');
-  }
-
-  return response.checkout_url;
-}
-
 
   async initiateWithdrawal(data: any): Promise<any> {
     this.logger.log(
@@ -462,44 +461,90 @@ export class PaymentService {
     return response ?? null;
   }
 
-  // Transaction Verification
-  async verifyTransaction(reference: string) {
-    this.logger.log(`Verifying transaction with reference: ${reference}`);
+// Transaction Verification
+async verifyTransaction(reference: string) {
+  this.logger.log(`🔍 Starting verification for reference: ${reference}`);
 
-    const { status, message } = await this.callPaymentGateway<{
+  const verifyUrl = `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`;
+
+  this.logger.log(`🌐 Verify URL: ${verifyUrl}`);
+  this.logger.log(`🔑 Secret key defined: ${!!this.paymentSecretKey}`);
+  if (!this.paymentSecretKey) {
+    this.logger.error(`❌ Payment secret key is missing in environment`);
+  }
+  if (!this.paymentBaseUrl) {
+    this.logger.error(`❌ Payment base URL is missing in environment`);
+  }
+
+  let response;
+  try {
+    response = await this.callPaymentGateway<{
       status: boolean;
       message: string;
-    }>(
-      'get',
-      `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`,
+    }>('get', verifyUrl);
+
+    this.logger.log(
+      `✅ Gateway verification response: ${JSON.stringify(response, null, 2)}`,
     );
-    if (!status || message !== 'verification successful') {
-      throw new BadRequestException('Transaction verification failed');
-    }
-
-    const { alreadyProcessed, txn } =
-      await this.findAndLockTransaction(reference);
-    if (alreadyProcessed) {
-      return { message: 'Already verified', success: true };
-    }
-
-    const ticketIds = txn.tickets
-      .filter((tt) => tt.ticket?.id)
-      .map((tt) => tt.ticket.id);
-
-    if (txn.type === 'PURCHASE') {
-      await this.processPurchaseFlow(txn, ticketIds);
-    } else if (txn.type === 'RESALE') {
-      await this.processResaleFlow(txn, ticketIds);
-    } else {
-      throw new BadRequestException(`Invalid transaction type: ${txn.type}`);
-    }
-
-    return {
-      message: 'Transaction verified and processed successfully',
-      ticketIds,
-    };
+  } catch (err) {
+    this.logger.error(
+      `❌ Error calling verify endpoint:\n${err.message}\n${err.stack}`,
+    );
+    this.logger.error(
+      `❌ Raw error response: ${JSON.stringify(err?.response?.data, null, 2)}`,
+    );
+    throw err;
   }
+
+  const { status, message } = response;
+  if (!status || message !== 'verification successful') {
+    this.logger.error(
+      `❌ Verification failed for reference: ${reference}, Response: ${JSON.stringify(response, null, 2)}`,
+    );
+    throw new BadRequestException('Transaction verification failed');
+  }
+
+  this.logger.log(`✅ Reference ${reference} verified by gateway`);
+
+  const { alreadyProcessed, txn } =
+    await this.findAndLockTransaction(reference);
+  this.logger.log(
+    `🔐 Transaction DB status for ${reference}: alreadyProcessed=${alreadyProcessed}`,
+  );
+
+  if (alreadyProcessed) {
+    return { message: 'Already verified', success: true };
+  }
+
+  const ticketIds = txn.tickets
+    .filter((tt) => tt.ticket?.id)
+    .map((tt) => tt.ticket.id);
+
+  this.logger.log(
+    `🎟️ Tickets linked to transaction ${reference}: ${JSON.stringify(ticketIds)}`,
+  );
+
+  if (txn.type === 'PURCHASE') {
+    this.logger.log(`🛒 Processing purchase flow for txn ${reference}`);
+    await this.processPurchaseFlow(txn, ticketIds);
+  } else if (txn.type === 'RESALE') {
+    this.logger.log(`♻️ Processing resale flow for txn ${reference}`);
+    await this.processResaleFlow(txn, ticketIds);
+  } else {
+    this.logger.error(`❌ Invalid transaction type: ${txn.type}`);
+    throw new BadRequestException(`Invalid transaction type: ${txn.type}`);
+  }
+
+  this.logger.log(
+    `🎉 Transaction ${reference} verified and processed successfully`,
+  );
+
+  return {
+    message: 'Transaction verified and processed successfully',
+    ticketIds,
+  };
+}
+
 
   // Ticket Code Generation
   private generateTicketCode(): string {
