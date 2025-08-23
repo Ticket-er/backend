@@ -59,8 +59,8 @@ model Event {
   royaltyFeeBps     Int    @default(1000)   // 5% organizer royalty on resale
 
   tickets     Ticket[]
-  ticketCategories TicketCategory[] // New relation for ticket categories
-  transactions Transaction[] // all purchase/resale txns for this event
+  ticketCategories TicketCategory[] 
+  transactions Transaction[]
 }
 
 model TicketCategory {
