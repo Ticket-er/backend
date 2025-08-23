@@ -26,23 +26,46 @@ export class PaymentService {
   ) {}
 
   // Private Helpers
-  private async callPaymentGateway<T>(
-    method: 'get' | 'post',
-    url: string,
-    data?: any,
-  ): Promise<T> {
-    try {
-      const response = await this.httpService.axiosRef[method](url, data, {
-        headers: { Authorization: `Bearer ${this.paymentSecretKey}` },
-      });
-      return response?.data;
-    } catch (error) {
-      this.logger.error(`Payment gateway error: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(
-        error?.response?.data?.message || 'Payment gateway request failed',
-      );
+private async callPaymentGateway<T>(
+  method: 'get' | 'post',
+  url: string,
+  data?: any,
+): Promise<T> {
+  const headers = {
+    Authorization: `Bearer ${this.paymentSecretKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  this.logger.log(`📤 Outgoing request → ${method.toUpperCase()} ${url}`);
+  this.logger.log(`📦 Request body: ${data ? JSON.stringify(data, null, 2) : 'N/A'}`);
+  this.logger.log(`🪪 Request headers: ${JSON.stringify(headers, null, 2)}`);
+
+  try {
+    const response = await this.httpService.request<T>({
+      method,
+      url,
+      data,
+      headers,
+    }).toPromise();
+
+    if (!response) {
+      this.logger.error('❌ No response received from payment gateway');
+      throw new InternalServerErrorException('No response from payment gateway');
     }
+    this.logger.log(`✅ Payment gateway response status: ${response.status}`);
+    this.logger.log(`✅ Response data: ${JSON.stringify(response.data, null, 2)}`);
+
+    return response.data;
+  } catch (err) {
+    this.logger.error(`❌ Payment gateway error: ${err.message}`);
+    this.logger.error(`❌ Status code: ${err?.response?.status || 'N/A'}`);
+    this.logger.error(
+      `❌ Raw response: ${JSON.stringify(err?.response?.data, null, 2)}`,
+    );
+    throw new InternalServerErrorException('Payment gateway request failed');
   }
+}
+sss
 
   private async findAndLockTransaction(reference: string) {
     return this.prisma.$transaction(async (tx) => {
