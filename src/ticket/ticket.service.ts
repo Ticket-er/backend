@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   BadRequestException,
   Injectable,
@@ -111,32 +112,44 @@ export class TicketService {
   }
 
   private async initiatePayment(
-    user: any,
-    event: any,
-    totalAmount: number,
-    reference: string,
-    ticketIds: string[],
-    clientPage: string,
-  ): Promise<string> {
-    let redirectUrl: string | undefined = undefined;
-    if (process.env.FRONTEND_URL) {
-      redirectUrl = `${process.env.FRONTEND_URL}` + clientPage;
-    }
-    const checkoutUrl = await this.paymentService.initiatePayment({
-      customer: { email: user.email, name: user.name },
-      amount: totalAmount,
-      currency: 'NGN',
-      reference,
-      processor: 'kora',
-      narration: `Tickets for ${event.name}`,
-      notification_url: process.env.NOTIFICATION_URL,
-      redirect_url: redirectUrl,
-      metadata: { ticketIds },
-    });
-    if (!checkoutUrl)
-      throw new BadRequestException('Failed to generate payment link');
-    return checkoutUrl;
+  user: any,
+  event: any,
+  totalAmount: number,
+  reference: string,
+  ticketIds: string[],
+  clientPage: string,
+): Promise<string> {
+  // const redirectUrl = `http://localhost:3000${clientPage}`
+  const redirectUrl = process.env.FRONTEND_URL
+    ? `${process.env.FRONTEND_URL}${clientPage}`
+    : undefined;
+
+  const payload = {
+    customer: { email: user.email, name: user.name },
+    amount: totalAmount,
+    currency: 'NGN',
+    reference,
+    processor: 'kora',
+    narration: `Tickets for ${event.name}`,
+    notification_url: process.env.NOTIFICATION_URL,
+    redirect_url: redirectUrl,
+    metadata: { ticketIds },
+  };
+
+  this.logger.log(
+    `💳 Initiating payment with payload:\n${JSON.stringify(payload, null, 2)}`
+  );
+
+  const checkoutUrl = await this.paymentService.initiatePayment(payload);
+
+  if (!checkoutUrl) {
+    this.logger.error('❌ Payment gateway returned no checkout URL');
+    throw new BadRequestException('Failed to generate payment link');
   }
+
+  this.logger.log(`✅ Payment initiated, checkout URL: ${checkoutUrl}`);
+  return checkoutUrl;
+}
 
   private async rollbackTransaction(reference: string, ticketIds: string[]) {
     await this.prisma.transactionTicket.deleteMany({

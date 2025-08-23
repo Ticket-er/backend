@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   BadRequestException,
   Injectable,
@@ -416,18 +417,38 @@ export class PaymentService {
 
   // Payment Initiation
   async initiatePayment(data: InitiateDto): Promise<string> {
-    this.logger.log(
-      `Initiating payment with data: ${JSON.stringify(data, null, 2)}`,
-    );
-    const response = await this.callPaymentGateway<{ checkout_url?: string }>(
+  this.logger.log(
+    `💡 Sending payment initiation request to gateway:\n${JSON.stringify(data, null, 2)}`
+  );
+
+  let response;
+  try {
+    response = await this.callPaymentGateway<{ checkout_url?: string }>(
       'post',
       `${this.paymentBaseUrl}/api/v1/initiate`,
       data,
     );
-    if (!response.checkout_url)
-      throw new BadRequestException('Failed to initiate payment');
-    return response.checkout_url;
+  } catch (error) {
+    this.logger.error(
+      `❌ Payment gateway request failed:\n${JSON.stringify(error.response?.data, null, 2)}\n${error.stack}`
+    );
+    throw new InternalServerErrorException(
+      error?.response?.data?.message || 'Payment gateway request failed',
+    );
   }
+
+  this.logger.log(
+    `💳 Payment gateway response:\n${JSON.stringify(response, null, 2)}`
+  );
+
+  if (!response.checkout_url) {
+    this.logger.error('❌ Payment gateway did not return a checkout_url');
+    throw new BadRequestException('Failed to initiate payment');
+  }
+
+  return response.checkout_url;
+}
+
 
   async initiateWithdrawal(data: any): Promise<any> {
     this.logger.log(

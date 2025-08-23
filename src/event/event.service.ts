@@ -139,7 +139,7 @@ export class EventService {
       return event;
     } catch (err) {
       this.logger.error(`Error creating event: ${err.message}`, err.stack);
-      console.log(err.message)
+      console.log(err.message);
       throw new InternalServerErrorException(err.message);
     }
   }
@@ -181,7 +181,10 @@ export class EventService {
             `Ticket category with ID ${category.id || 'unknown'} or name ${category.name || 'unknown'} does not exist`,
           );
         }
-        if (existingCategory.minted > category.maxTickets) {
+        if (
+          category.maxTickets !== undefined &&
+          existingCategory.minted > category.maxTickets
+        ) {
           throw new BadRequestException(
             `Cannot reduce maxTickets for category ${existingCategory.name} below minted tickets (${existingCategory.minted})`,
           );

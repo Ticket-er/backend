@@ -296,110 +296,77 @@ export class EventController {
   getOrganizerEvents(@Req() req) {
     return this.eventService.getOrganizerEvents(req.user.sub);
   }
-
-  @UseGuards(JwtGuard, RolesGuard)
-  @Patch(':id')
-  @Roles(Role.ORGANIZER)
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Update an event',
-    description:
-      'Updates an existing event by ID with optional banner image upload. Only price and maxTickets of existing ticket categories can be updated.',
-  })
-  @ApiParam({
-    name: 'id',
-    description: 'UUID of the event to update',
-    type: String,
-    example: '123e4567-e89b-12d3-a456-426614174000',
-  })
-  @ApiBody({
-    description: 'Event update data with optional ticket category updates and file upload',
-    schema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', example: 'Updated Festival' },
-        description: {
-          type: 'string',
-          example: 'Updated description for the music festival.',
-        },
-        location: {
-          type: 'string',
-          example: 'Lekki Conservation Centre, Lagos',
-        },
-        category: {
-          type: 'string',
-          enum: [
-            'MUSIC',
-            'CONCERT',
-            'CONFERENCE',
-            'WORKSHOP',
-            'SPORTS',
-            'COMEDY',
-            'THEATRE',
-            'FESTIVAL',
-            'EXHIBITION',
-            'RELIGION',
-            'NETWORKING',
-            'TECH',
-            'FASHION',
-            'PARTY',
-          ],
-          example: 'MUSIC',
-        },
-        date: {
-          type: 'string',
-          format: 'date-time',
-          example: '2025-08-01T18:00:00Z',
-        },
-        ticketCategories: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-                example: 'cuid123456789',
-                description: 'Optional ID of the existing ticket category',
-              },
-              name: {
-                type: 'string',
-                example: 'VVIP',
-                description: 'Optional name of the existing ticket category',
-              },
-              price: { type: 'number', example: 150 },
-              maxTickets: { type: 'number', example: 75 },
-            },
-            required: ['price', 'maxTickets'],
-          },
-        },
-        file: { type: 'string', format: 'binary' },
+@UseGuards(JwtGuard, RolesGuard)
+@Patch(':id')
+@Roles(Role.ORGANIZER)
+@UseInterceptors(FileInterceptor('file'))
+@ApiConsumes('multipart/form-data')
+@ApiOperation({
+  summary: 'Update an event',
+  description:
+    'Updates an existing event by ID with optional banner image upload. Only price and maxTickets of existing ticket categories can be updated.',
+})
+@ApiParam({
+  name: 'id',
+  description: 'UUID of the event to update',
+  type: String,
+  example: '123e4567-e89b-12d3-a456-426614174000',
+})
+@ApiBody({
+  description: 'Event update data with optional ticket category updates and file upload',
+  schema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', example: 'Updated Festival' },
+      description: {
+        type: 'string',
+        example: 'Updated description for the music festival.',
       },
-      required: [],
+      location: { type: 'string', example: 'Lekki Conservation Centre, Lagos' },
+      category: {
+        type: 'string',
+        enum: [
+          'MUSIC', 'CONCERT', 'CONFERENCE', 'WORKSHOP', 'SPORTS', 'COMEDY',
+          'THEATRE', 'FESTIVAL', 'EXHIBITION', 'RELIGION', 'NETWORKING',
+          'TECH', 'FASHION', 'PARTY'
+        ],
+        example: 'MUSIC',
+      },
+      date: { type: 'string', format: 'date-time', example: '2025-08-01T18:00:00Z' },
+      ticketCategories: {
+        type: 'string', // received as stringified JSON
+        example: '[{"id":"cuid123","price":150,"maxTickets":75}]',
+      },
+      file: { type: 'string', format: 'binary' },
     },
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Event updated successfully with ticket categories',
-    type: Object,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad Request: Invalid UUID or non-existent ticket category',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden: User is not the organiser',
-  })
-  @ApiResponse({ status: 404, description: 'Event not found' })
-  update(
-    @Param('id') id: string,
-    @Body() dto: UpdateEventDto,
-    @UploadedFile() file: Express.Multer.File,
-    @Req() req,
-  ) {
-    return this.eventService.updateEvent(id, dto, req.user.sub, file);
+    required: [],
+  },
+})
+@ApiResponse({ status: 200, description: 'Event updated successfully', type: Object })
+@ApiResponse({ status: 400, description: 'Bad Request: Invalid UUID or ticket category' })
+@ApiResponse({ status: 403, description: 'Forbidden: User is not the organiser' })
+@ApiResponse({ status: 404, description: 'Event not found' })
+update(
+  @Param('id') id: string,
+  @Body() body: any,
+  @UploadedFile() file: Express.Multer.File,
+  @Req() req,
+) {
+  // Parse stringified ticketCategories if needed
+  if (typeof body.ticketCategories === 'string') {
+    try {
+      body.ticketCategories = JSON.parse(body.ticketCategories);
+    } catch (err) {
+      console.error('Ticket category parsing error:', err.message);
+      throw new BadRequestException('Invalid ticketCategories JSON format');
+    }
   }
+
+  // Transform into DTO so class-validator can run properly
+  const dto = plainToInstance(UpdateEventDto, body);
+
+  return this.eventService.updateEvent(id, dto, req.user.sub, file);
+}
 
   @UseGuards(JwtGuard, RolesGuard)
   @Delete(':id')
