@@ -65,10 +65,6 @@ export class TicketService {
       );
       throw new NotFoundException('Ticket category not found');
     }
-    if (ticketCategory.minted >= ticketCategory.maxTickets) {
-      this.logger.warn(`No tickets available for category ${ticketCategoryId}`);
-      throw new BadRequestException('No tickets available for this category');
-    }
     return ticketCategory;
   }
 
@@ -112,44 +108,43 @@ export class TicketService {
   }
 
   private async initiatePayment(
-  user: any,
-  event: any,
-  totalAmount: number,
-  reference: string,
-  ticketIds: string[],
-  clientPage: string,
-): Promise<string> {
-  // const redirectUrl = `http://localhost:3000${clientPage}`
-  const redirectUrl = process.env.FRONTEND_URL
-    ? `${process.env.FRONTEND_URL}${clientPage}`
-    : undefined;
+    user: any,
+    event: any,
+    totalAmount: number,
+    reference: string,
+    ticketIds: string[],
+    clientPage: string,
+  ): Promise<string> {
+    const redirectUrl = process.env.FRONTEND_URL
+      ? `${process.env.FRONTEND_URL}${clientPage}`
+      : undefined;
 
-  const payload = {
-    customer: { email: user.email, name: user.name },
-    amount: totalAmount,
-    currency: 'NGN',
-    reference,
-    processor: 'kora',
-    narration: `Tickets for ${event.name}`,
-    notification_url: process.env.NOTIFICATION_URL,
-    redirect_url: redirectUrl,
-    metadata: { ticketIds },
-  };
+    const payload = {
+      customer: { email: user.email, name: user.name },
+      amount: totalAmount,
+      currency: 'NGN',
+      reference,
+      processor: 'kora',
+      narration: `Tickets for ${event.name}`,
+      notification_url: process.env.NOTIFICATION_URL,
+      redirect_url: redirectUrl,
+      metadata: { ticketIds },
+    };
 
-  this.logger.log(
-    `💳 Initiating payment with payload:\n${JSON.stringify(payload, null, 2)}`
-  );
+    this.logger.log(
+      `💳 Initiating payment with payload:\n${JSON.stringify(payload, null, 2)}`,
+    );
 
-  const checkoutUrl = await this.paymentService.initiatePayment(payload);
+    const checkoutUrl = await this.paymentService.initiatePayment(payload);
 
-  if (!checkoutUrl) {
-    this.logger.error('❌ Payment gateway returned no checkout URL');
-    throw new BadRequestException('Failed to generate payment link');
+    if (!checkoutUrl) {
+      this.logger.error('❌ Payment gateway returned no checkout URL');
+      throw new BadRequestException('Failed to generate payment link');
+    }
+
+    this.logger.log(`✅ Payment initiated, checkout URL: ${checkoutUrl}`);
+    return checkoutUrl;
   }
-
-  this.logger.log(`✅ Payment initiated, checkout URL: ${checkoutUrl}`);
-  return checkoutUrl;
-}
 
   private async rollbackTransaction(reference: string, ticketIds: string[]) {
     await this.prisma.transactionTicket.deleteMany({
@@ -207,41 +202,55 @@ export class TicketService {
     );
 
     const event = await this.validateEvent(dto.eventId);
-    const ticketCategory = await this.validateTicketCategory(
-      dto.ticketCategoryId,
-      dto.eventId,
-    );
-    if (ticketCategory.minted + dto.quantity > ticketCategory.maxTickets) {
-      this.logger.warn(
-        `Not enough tickets for category ${dto.ticketCategoryId}`,
-      );
-      throw new BadRequestException(
-        'Not enough tickets available in this category',
-      );
-    }
     const user = await this.validateUser(userId, event);
 
-    const totalAmount = ticketCategory.price * dto.quantity;
+    // Validate all ticket categories and calculate total amount
+    const ticketCategories = await Promise.all(
+      dto.ticketCategories.map(async (item) => {
+        const category = await this.validateTicketCategory(
+          item.ticketCategoryId,
+          dto.eventId,
+        );
+        if (category.minted + item.quantity > category.maxTickets) {
+          this.logger.warn(
+            `Not enough tickets for category ${item.ticketCategoryId}`,
+          );
+          throw new BadRequestException(
+            `Not enough tickets available in category ${category.name}`,
+          );
+        }
+        return { ...category, quantity: item.quantity };
+      }),
+    );
+
+    const totalAmount = ticketCategories.reduce(
+      (sum, category) => sum + category.price * category.quantity,
+      0,
+    );
     const reference = `txn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    let ticketIds: string[];
+    // Create tickets for all categories
+    let ticketIds: string[] = [];
     try {
-      ticketIds = await this.createTickets(
-        userId,
-        dto.eventId,
-        dto.ticketCategoryId,
-        dto.quantity,
-      );
+      for (const category of ticketCategories) {
+        const ids = await this.createTickets(
+          userId,
+          dto.eventId,
+          category.id,
+          category.quantity,
+        );
+        ticketIds = ticketIds.concat(ids);
+      }
     } catch (err) {
       this.logger.error(
-        `Ticket creation failed for event ${dto.eventId}, category ${dto.ticketCategoryId}`,
+        `Ticket creation failed for event ${dto.eventId}`,
         err.stack,
       );
       throw new BadRequestException('Error while creating tickets');
     }
 
     try {
-      if (ticketCategory.price === 0) {
+      if (totalAmount === 0) {
         // Free event: Skip payment, create transaction with SUCCESS status
         await this.createTransaction(
           reference,
@@ -252,10 +261,14 @@ export class TicketService {
           'SUCCESS',
           ticketIds,
         );
-        await this.prisma.ticketCategory.update({
-          where: { id: dto.ticketCategoryId },
-          data: { minted: { increment: ticketIds.length } },
-        });
+        await Promise.all(
+          ticketCategories.map((category) =>
+            this.prisma.ticketCategory.update({
+              where: { id: category.id },
+              data: { minted: { increment: category.quantity } },
+            }),
+          ),
+        );
         return {
           message: 'Free tickets created successfully',
           ticketIds,

@@ -88,13 +88,13 @@ export class TicketController {
   @UseGuards(JwtGuard)
   @Post('buy')
   @ApiOperation({
-    summary: 'Buy a new ticket',
+    summary: 'Buy new tickets',
     description:
-      'Purchases a new ticket for a specific event and ticket category.',
+      'Purchases new tickets for a specific event across multiple ticket categories.',
   })
   @ApiBody({
     description:
-      'Payload to specify event, ticket category, and quantity of tickets to buy',
+      'Payload to specify event and ticket categories with quantities to buy',
     type: BuyNewDto,
     schema: {
       type: 'object',
@@ -103,14 +103,23 @@ export class TicketController {
           type: 'string',
           example: '123e4567-e89b-12d3-a456-426614174000',
         },
-        ticketCategoryId: {
-          type: 'string',
-          example: 'clx81wekg0000ueaom6b8x7ti',
-          description: 'UUID of the ticket category (e.g., VVIP, VIP, Regular)',
+        ticketCategories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              ticketCategoryId: {
+                type: 'string',
+                example: 'clx81wekg0000ueaom6b8x7ti',
+                description: 'UUID of the ticket category (e.g., VVIP, VIP, Regular)',
+              },
+              quantity: { type: 'number', example: 2 },
+            },
+            required: ['ticketCategoryId', 'quantity'],
+          },
         },
-        quantity: { type: 'number', example: 2 },
       },
-      required: ['eventId', 'ticketCategoryId', 'quantity'],
+      required: ['eventId', 'ticketCategories'],
     },
   })
   @ApiResponse({
