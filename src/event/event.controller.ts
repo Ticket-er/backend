@@ -14,6 +14,7 @@ import {
   UploadedFile,
   HttpCode,
   Delete,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { EventService } from './event.service';
@@ -34,6 +35,7 @@ import {
   ApiBearerAuth,
   ApiConsumes,
 } from '@nestjs/swagger';
+import { plainToInstance } from 'class-transformer';
 
 @ApiTags('Events')
 @Controller('v1/events')
@@ -120,94 +122,104 @@ export class EventController {
     return this.eventService.getSingleEvent(id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Post('create')
-  @HttpCode(201)
-  @Roles(Role.ORGANIZER)
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Create a new event',
-    description:
-      'Creates a new event with ticket categories and optional banner image upload for the authenticated organizer.',
-  })
-  @ApiBody({
-    description: 'Event creation data with ticket categories and optional file upload',
-    schema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', example: 'Music Festival' },
-        description: {
-          type: 'string',
-          example: 'A music festival hosted by Davido and Rema.',
-        },
-        location: {
-          type: 'string',
-          example: 'Lekki Conservation Centre, Lagos',
-        },
-        category: {
-          type: 'string',
-          enum: [
-            'MUSIC',
-            'CONCERT',
-            'CONFERENCE',
-            'WORKSHOP',
-            'SPORTS',
-            'COMEDY',
-            'THEATRE',
-            'FESTIVAL',
-            'EXHIBITION',
-            'RELIGION',
-            'NETWORKING',
-            'TECH',
-            'FASHION',
-            'PARTY',
-          ],
-          example: 'MUSIC',
-        },
-        date: {
-          type: 'string',
-          format: 'date-time',
-          example: '2025-07-08T18:00:00Z',
-        },
-        ticketCategories: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', example: 'VVIP' },
-              price: { type: 'number', example: 100 },
-              maxTickets: { type: 'number', example: 50 },
-            },
-            required: ['name', 'price', 'maxTickets'],
-          },
-        },
-        file: { type: 'string', format: 'binary' },
+
+
+@UseGuards(JwtGuard, RolesGuard)
+@Post('create')
+@HttpCode(201)
+@Roles(Role.ORGANIZER)
+@UseInterceptors(FileInterceptor('file'))
+@ApiConsumes('multipart/form-data')
+@ApiOperation({
+  summary: 'Create a new event',
+  description:
+    'Creates a new event with ticket categories and optional banner image upload for the authenticated organizer.',
+})
+@ApiBody({
+  description:
+    'Event creation data with ticket categories and optional file upload',
+  schema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', example: 'Music Festival' },
+      description: {
+        type: 'string',
+        example: 'A music festival hosted by Davido and Rema.',
       },
-      required: ['name', 'date', 'category', 'ticketCategories'],
+      location: {
+        type: 'string',
+        example: 'Lekki Conservation Centre, Lagos',
+      },
+      category: {
+        type: 'string',
+        enum: [
+          'MUSIC',
+          'CONCERT',
+          'CONFERENCE',
+          'WORKSHOP',
+          'SPORTS',
+          'COMEDY',
+          'THEATRE',
+          'FESTIVAL',
+          'EXHIBITION',
+          'RELIGION',
+          'NETWORKING',
+          'TECH',
+          'FASHION',
+          'PARTY',
+        ],
+        example: 'MUSIC',
+      },
+      date: {
+        type: 'string',
+        format: 'date-time',
+        example: '2025-07-08T18:00:00Z',
+      },
+      ticketCategories: {
+        type: 'string', // received as stringified JSON
+        example: '[{"name":"VVIP","price":100,"maxTickets":50}]',
+      },
+      file: { type: 'string', format: 'binary' },
     },
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'Event created successfully with ticket categories',
-    type: Object,
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad Request: Invalid data or missing ticket categories',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden: User is not an organizer',
-  })
-  create(
-    @Body() dto: CreateEventDto,
-    @UploadedFile() file: Express.Multer.File,
-    @Req() req,
-  ) {
-    const user = req.user;
-    return this.eventService.createEvent(dto, user.sub, file);
-  }
+    required: ['name', 'date', 'category', 'ticketCategories'],
+  },
+})
+@ApiResponse({
+  status: 201,
+  description: 'Event created successfully with ticket categories',
+  type: Object,
+})
+@ApiResponse({
+  status: 400,
+  description: 'Bad Request: Invalid data or missing ticket categories',
+})
+@ApiResponse({
+  status: 403,
+  description: 'Forbidden: User is not an organizer',
+})
+    async create(
+      @Body() body: any,
+      @UploadedFile() file: Express.Multer.File,
+      @Req() req,
+    ) {
+      const user = req.user;
+
+      // Parse stringified ticketCategories
+      if (typeof body.ticketCategories === 'string') {
+        try {
+          body.ticketCategories = JSON.parse(body.ticketCategories);
+      
+        } catch (err) {
+          console.error('Ticket category parsing error:', err.message);
+          throw new BadRequestException('Invalid ticketCategories JSON format');
+        }
+      }
+
+      // Transform into DTO instance so class-validator runs properly
+      const dto = plainToInstance(CreateEventDto, body);
+
+      return this.eventService.createEvent(dto, user.sub, file);
+}
 
   @UseGuards(JwtGuard, RolesGuard)
   @Get('user/my')

@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   BadRequestException,
   ForbiddenException,
@@ -138,7 +139,8 @@ export class EventService {
       return event;
     } catch (err) {
       this.logger.error(`Error creating event: ${err.message}`, err.stack);
-      throw new InternalServerErrorException('Failed to create event');
+      console.log(err.message)
+      throw new InternalServerErrorException(err.message);
     }
   }
 
