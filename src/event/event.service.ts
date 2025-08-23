@@ -34,7 +34,7 @@ export class EventService {
   private async findEventBySlug(slug: string) {
     const event = await this.prisma.event.findUnique({
       where: { slug },
-      include: { ticketCategories: true },
+      include: { ticketCategories: true , organizer: true},
     });
     if (!event) throw new NotFoundException('Event not found');
     return event;
