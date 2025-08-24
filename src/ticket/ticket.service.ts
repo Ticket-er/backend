@@ -128,7 +128,7 @@ export class TicketService {
       narration: `Tickets for ${event.name}`,
       notification_url: process.env.NOTIFICATION_URL,
       redirect_url: redirectUrl,
-      // metadata: { ticketIds },
+      metadata: { userId: user.id },
     };
 
     this.logger.log(
