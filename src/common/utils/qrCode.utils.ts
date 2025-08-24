@@ -10,32 +10,22 @@ export interface QRTicketData {
   timestamp: number;
 }
 
-// Generate QR code on the backend
-export const generateTicketQR = async (
+export const generateTicketQRBuffer = (
   ticketData: QRTicketData,
-): Promise<string> => {
-  try {
-    // Use environment variable or fallback for the verification URL base
-    const baseUrl = process.env.APP_BASE_URL || 'https://ticketer.com';
-    const verificationUrl = `${baseUrl}/verify-ticket?data=${encodeURIComponent(
-      JSON.stringify(ticketData),
-    )}`;
+): Promise<Buffer> => {
+  const baseUrl = process.env.FRONTEND_URL || 'https://ticketer.com';
+  const verificationUrl = `${baseUrl}/verify-ticket?data=${encodeURIComponent(
+    JSON.stringify(ticketData),
+  )}`;
 
-    // Generate QR code as data URL
-    const qrCodeDataUrl = await QRCode.toDataURL(verificationUrl, {
-      width: 200,
-      margin: 2,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF',
-      },
-    });
-
-    return qrCodeDataUrl;
-  } catch (error) {
-    console.error('Error generating QR code:', error);
-    throw new Error('Failed to generate QR code');
-  }
+  return QRCode.toBuffer(verificationUrl, {
+    width: 300,
+    margin: 2,
+    color: {
+      dark: '#000000',
+      light: '#FFFFFF',
+    },
+  });
 };
 
 // Parse ticket data from verification URL

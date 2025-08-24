@@ -50,6 +50,43 @@ export class CloudinaryService {
     });
   }
 
+  async uploadBuffer(buffer: Buffer, folder = 'ticketer'): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          resource_type: 'image',
+          transformation: [
+            { width: 1000, crop: 'scale' },
+            { quality: 'auto' },
+            { fetch_format: 'auto' },
+          ],
+        },
+        (error, result) => {
+          if (error) {
+            return reject(
+              new InternalServerErrorException(
+                `Cloudinary upload failed: ${error.message}`,
+              ),
+            );
+          }
+          if (!result?.secure_url) {
+            return reject(
+              new InternalServerErrorException(
+                'Cloudinary upload failed: No secure_url returned.',
+              ),
+            );
+          }
+          resolve(result.secure_url);
+        },
+      );
+
+      // Pipe your raw buffer into Cloudinary
+      const stream = Readable.from(buffer);
+      stream.pipe(uploadStream);
+    });
+  }
+
   async deleteImage(imageUrl: string): Promise<void> {
     try {
       // Extract public_id from the image URL (including folder path)

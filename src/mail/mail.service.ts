@@ -7,7 +7,10 @@ import {
   changePasswordTemplate,
   eventCreationTemplate,
 } from './templates';
-import { generateTicketQR, QRTicketData } from '../common/utils/qrCode.utils';
+import {
+  generateTicketQRBuffer,
+  QRTicketData,
+} from '../common/utils/qrCode.utils';
 import {
   TicketDetails,
   ticketPurchaseAdminTemplate,
@@ -19,13 +22,14 @@ import {
   ticketResaleSellerTemplate,
   ticketResaleTemplate,
 } from './templates/ticket-purchase.template';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
 
 @Injectable()
 export class MailService {
   private transporter;
   private logger = new Logger(MailService.name);
 
-  constructor() {
+  constructor(private readonly cloudinary: CloudinaryService) {
     this.transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -96,12 +100,19 @@ export class MailService {
     }[],
   ) {
     const ticketDetails: TicketDetails[] = await Promise.all(
-      tickets.map(async ({ ticketId, code, qrData, categoryName }) => ({
-        ticketId,
-        code,
-        categoryName,
-        qrCodeDataUrl: await generateTicketQR(qrData),
-      })),
+      tickets.map(async ({ ticketId, code, qrData, categoryName }) => {
+        const qrBuffer = await generateTicketQRBuffer(qrData);
+        const qrUrl = await this.cloudinary.uploadBuffer(
+          qrBuffer,
+          'ticketer/qrcodes',
+        );
+        return {
+          ticketId,
+          code,
+          categoryName,
+          qrCodeDataUrl: qrUrl, // <-- now a real hosted image URL
+        };
+      }),
     );
 
     await this.sendMail(
@@ -167,12 +178,19 @@ export class MailService {
     }[],
   ) {
     const ticketDetails: TicketDetails[] = await Promise.all(
-      tickets.map(async ({ ticketId, code, qrData, categoryName }) => ({
-        ticketId,
-        code,
-        categoryName,
-        qrCodeDataUrl: await generateTicketQR(qrData),
-      })),
+      tickets.map(async ({ ticketId, code, qrData, categoryName }) => {
+        const qrBuffer = await generateTicketQRBuffer(qrData);
+        const qrUrl = await this.cloudinary.uploadBuffer(
+          qrBuffer,
+          'ticketer/qrcodes',
+        );
+        return {
+          ticketId,
+          code,
+          categoryName,
+          qrCodeDataUrl: qrUrl,
+        };
+      }),
     );
 
     await this.sendMail(
