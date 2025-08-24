@@ -128,7 +128,7 @@ export class TicketService {
       narration: `Tickets for ${event.name}`,
       notification_url: process.env.NOTIFICATION_URL,
       redirect_url: redirectUrl,
-      metadata: { ticketIds },
+      // metadata: { ticketIds },
     };
 
     this.logger.log(
@@ -285,6 +285,9 @@ export class TicketService {
         'PENDING',
         ticketIds,
       );
+      this.logger.log(
+        `Preparing to initiate payment for ${ticketIds.length} tickets, ref: ${reference}`,
+      );
       const checkoutUrl = await this.initiatePayment(
         user,
         event,
@@ -293,11 +296,13 @@ export class TicketService {
         ticketIds,
         clientPage,
       );
-      this.logger.log(`Payment initiated: ${checkoutUrl}`);
+      this.logger.log(
+        `Payment initiated successfully for ${ticketIds.length} tickets: ${checkoutUrl}`,
+      );
       return { checkoutUrl };
     } catch (err) {
       this.logger.error(
-        `Payment initiation failed for ref ${reference}`,
+        `Payment initiation failed for ${ticketIds.length} tickets, ref ${reference}: ${err.message}`,
         err.stack,
       );
       await this.rollbackTransaction(reference, ticketIds);
