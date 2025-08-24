@@ -579,14 +579,24 @@ export class TicketService {
     if (!ticket) throw new NotFoundException('Ticket not found');
 
     const isOrganizer = ticket.event.organizerId === userId;
-    let updated = false;
 
-    if (isOrganizer && !ticket.isUsed) {
+    let status = 'VALID';
+    let message = 'Ticket is valid';
+    let markedUsed = false;
+
+    if (ticket.isUsed) {
+      status = 'USED';
+      message = 'Ticket has already been used';
+    } else if (isOrganizer) {
+      // first time: just show valid
+      // second time: mark as used
       await this.prisma.ticket.update({
         where: { id: ticket.id },
         data: { isUsed: true },
       });
-      updated = true;
+      status = 'VALID';
+      message = 'Ticket is valid and now marked as used';
+      markedUsed = true;
     }
 
     return {
@@ -594,13 +604,9 @@ export class TicketService {
       code: ticket.code,
       eventId: ticket.eventId,
       ticketCategory: ticket.ticketCategory,
-      status: ticket.isUsed ? 'USED' : 'VALID',
-      markedUsed: updated,
-      message: ticket.isUsed
-        ? 'Ticket has already been used'
-        : isOrganizer
-          ? 'Ticket marked as used'
-          : 'Ticket is valid',
+      status,
+      markedUsed,
+      message,
     };
   }
 }
