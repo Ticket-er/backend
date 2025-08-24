@@ -26,46 +26,54 @@ export class PaymentService {
   ) {}
 
   // Private Helpers
-private async callPaymentGateway<T>(
-  method: 'get' | 'post',
-  url: string,
-  data?: any,
-): Promise<T> {
-  const headers = {
-    Authorization: `Bearer ${this.paymentSecretKey}`,
-    'Content-Type': 'application/json',
-  };
+  private async callPaymentGateway<T>(
+    method: 'get' | 'post',
+    url: string,
+    data?: any,
+  ): Promise<T> {
+    const headers = {
+      Authorization: `Bearer ${this.paymentSecretKey}`,
+      'Content-Type': 'application/json',
+    };
 
-  this.logger.log(`📤 Outgoing request → ${method.toUpperCase()} ${url}`);
-  this.logger.log(`📦 Request body: ${data ? JSON.stringify(data, null, 2) : 'N/A'}`);
-  this.logger.log(`🪪 Request headers: ${JSON.stringify(headers, null, 2)}`);
-
-  try {
-    const response = await this.httpService.request<T>({
-      method,
-      url,
-      data,
-      headers,
-    }).toPromise();
-
-    if (!response) {
-      this.logger.error('❌ No response received from payment gateway');
-      throw new InternalServerErrorException('No response from payment gateway');
-    }
-    this.logger.log(`✅ Payment gateway response status: ${response.status}`);
-    this.logger.log(`✅ Response data: ${JSON.stringify(response.data, null, 2)}`);
-
-    return response.data;
-  } catch (err) {
-    this.logger.error(`❌ Payment gateway error: ${err.message}`);
-    this.logger.error(`❌ Status code: ${err?.response?.status || 'N/A'}`);
-    this.logger.error(
-      `❌ Raw response: ${JSON.stringify(err?.response?.data, null, 2)}`,
+    this.logger.log(`📤 Outgoing request → ${method.toUpperCase()} ${url}`);
+    this.logger.log(
+      `📦 Request body: ${data ? JSON.stringify(data, null, 2) : 'N/A'}`,
     );
-    throw new InternalServerErrorException('Payment gateway request failed');
+    this.logger.log(`🪪 Request headers: ${JSON.stringify(headers, null, 2)}`);
+
+    try {
+      const response = await this.httpService
+        .request<T>({
+          method,
+          url,
+          data,
+          headers,
+        })
+        .toPromise();
+
+      if (!response) {
+        this.logger.error('❌ No response received from payment gateway');
+        throw new InternalServerErrorException(
+          'No response from payment gateway',
+        );
+      }
+      this.logger.log(`✅ Payment gateway response status: ${response.status}`);
+      this.logger.log(
+        `✅ Response data: ${JSON.stringify(response.data, null, 2)}`,
+      );
+
+      return response.data;
+    } catch (err) {
+      this.logger.error(`❌ Payment gateway error: ${err.message}`);
+      this.logger.error(`❌ Status code: ${err?.response?.status || 'N/A'}`);
+      this.logger.error(
+        `❌ Raw response: ${JSON.stringify(err?.response?.data, null, 2)}`,
+      );
+      throw new InternalServerErrorException('Payment gateway request failed');
+    }
   }
-}
-sss
+  sss;
 
   private async findAndLockTransaction(reference: string) {
     return this.prisma.$transaction(async (tx) => {
@@ -243,25 +251,39 @@ sss
       throw new NotFoundException('One or more tickets not found');
     }
 
-    const ticketCategoryId = tickets[0].ticketCategoryId;
-    if (
-      !ticketCategoryId ||
-      tickets.some((t) => t.ticketCategoryId !== ticketCategoryId)
-    ) {
-      throw new BadRequestException(
-        'All tickets must belong to the same category',
+    // Group tickets by category
+    const ticketsByCategory = tickets.reduce(
+      (acc, t) => {
+        if (t.ticketCategoryId == null) {
+          throw new BadRequestException(
+            `Ticket ${t.id} missing ticketCategoryId`,
+          );
+        }
+        if (!acc[t.ticketCategoryId]) acc[t.ticketCategoryId] = [];
+        acc[t.ticketCategoryId].push(t);
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
+
+    for (const [categoryId, ticketsInCat] of Object.entries(
+      ticketsByCategory,
+    )) {
+      const ticketCategory = await this.prisma.ticketCategory.findUnique({
+        where: { id: categoryId },
+      });
+      if (!ticketCategory) {
+        throw new NotFoundException(`Ticket category ${categoryId} not found`);
+      }
+
+      await this.updateTicketCategoryMintedCount(
+        categoryId,
+        ticketsInCat.length,
       );
-    }
 
-    const ticketCategory = await this.prisma.ticketCategory.findUnique({
-      where: { id: ticketCategoryId },
-    });
-    if (!ticketCategory) {
-      throw new NotFoundException('Ticket category not found');
+      // ⚠️ If organizer revenue split differs per category,
+      // calculate proceeds per ticketsInCat here instead of globally
     }
-
-    const ticketCount = ticketIds.length;
-    await this.updateTicketCategoryMintedCount(ticketCategoryId, ticketCount);
 
     const platformCut = Math.floor(
       (txn.amount * txn.event.primaryFeeBps) / 10000,
@@ -484,90 +506,89 @@ sss
     return response ?? null;
   }
 
-// Transaction Verification
-async verifyTransaction(reference: string) {
-  this.logger.log(`🔍 Starting verification for reference: ${reference}`);
+  // Transaction Verification
+  async verifyTransaction(reference: string) {
+    this.logger.log(`🔍 Starting verification for reference: ${reference}`);
 
-  const verifyUrl = `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`;
+    const verifyUrl = `${this.paymentBaseUrl}/api/v1/transactions/verify?reference=${reference}`;
 
-  this.logger.log(`🌐 Verify URL: ${verifyUrl}`);
-  this.logger.log(`🔑 Secret key defined: ${!!this.paymentSecretKey}`);
-  if (!this.paymentSecretKey) {
-    this.logger.error(`❌ Payment secret key is missing in environment`);
-  }
-  if (!this.paymentBaseUrl) {
-    this.logger.error(`❌ Payment base URL is missing in environment`);
-  }
+    this.logger.log(`🌐 Verify URL: ${verifyUrl}`);
+    this.logger.log(`🔑 Secret key defined: ${!!this.paymentSecretKey}`);
+    if (!this.paymentSecretKey) {
+      this.logger.error(`❌ Payment secret key is missing in environment`);
+    }
+    if (!this.paymentBaseUrl) {
+      this.logger.error(`❌ Payment base URL is missing in environment`);
+    }
 
-  let response;
-  try {
-    response = await this.callPaymentGateway<{
-      status: boolean;
-      message: string;
-    }>('get', verifyUrl);
+    let response;
+    try {
+      response = await this.callPaymentGateway<{
+        status: boolean;
+        message: string;
+      }>('get', verifyUrl);
+
+      this.logger.log(
+        `✅ Gateway verification response: ${JSON.stringify(response, null, 2)}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `❌ Error calling verify endpoint:\n${err.message}\n${err.stack}`,
+      );
+      this.logger.error(
+        `❌ Raw error response: ${JSON.stringify(err?.response?.data, null, 2)}`,
+      );
+      throw err;
+    }
+
+    const { status, message } = response;
+    if (!status || message !== 'verification successful') {
+      this.logger.error(
+        `❌ Verification failed for reference: ${reference}, Response: ${JSON.stringify(response, null, 2)}`,
+      );
+      throw new BadRequestException('Transaction verification failed');
+    }
+
+    this.logger.log(`✅ Reference ${reference} verified by gateway`);
+
+    const { alreadyProcessed, txn } =
+      await this.findAndLockTransaction(reference);
+    this.logger.log(
+      `🔐 Transaction DB status for ${reference}: alreadyProcessed=${alreadyProcessed}`,
+    );
+
+    if (alreadyProcessed) {
+      return { message: 'Already verified', success: true };
+    }
+
+    const ticketIds = txn.tickets
+      .filter((tt) => tt.ticket?.id)
+      .map((tt) => tt.ticket.id);
 
     this.logger.log(
-      `✅ Gateway verification response: ${JSON.stringify(response, null, 2)}`,
+      `🎟️ Tickets linked to transaction ${reference}: ${JSON.stringify(ticketIds)}`,
     );
-  } catch (err) {
-    this.logger.error(
-      `❌ Error calling verify endpoint:\n${err.message}\n${err.stack}`,
+
+    if (txn.type === 'PURCHASE') {
+      this.logger.log(`🛒 Processing purchase flow for txn ${reference}`);
+      await this.processPurchaseFlow(txn, ticketIds);
+    } else if (txn.type === 'RESALE') {
+      this.logger.log(`♻️ Processing resale flow for txn ${reference}`);
+      await this.processResaleFlow(txn, ticketIds);
+    } else {
+      this.logger.error(`❌ Invalid transaction type: ${txn.type}`);
+      throw new BadRequestException(`Invalid transaction type: ${txn.type}`);
+    }
+
+    this.logger.log(
+      `🎉 Transaction ${reference} verified and processed successfully`,
     );
-    this.logger.error(
-      `❌ Raw error response: ${JSON.stringify(err?.response?.data, null, 2)}`,
-    );
-    throw err;
+
+    return {
+      message: 'Transaction verified and processed successfully',
+      ticketIds,
+    };
   }
-
-  const { status, message } = response;
-  if (!status || message !== 'verification successful') {
-    this.logger.error(
-      `❌ Verification failed for reference: ${reference}, Response: ${JSON.stringify(response, null, 2)}`,
-    );
-    throw new BadRequestException('Transaction verification failed');
-  }
-
-  this.logger.log(`✅ Reference ${reference} verified by gateway`);
-
-  const { alreadyProcessed, txn } =
-    await this.findAndLockTransaction(reference);
-  this.logger.log(
-    `🔐 Transaction DB status for ${reference}: alreadyProcessed=${alreadyProcessed}`,
-  );
-
-  if (alreadyProcessed) {
-    return { message: 'Already verified', success: true };
-  }
-
-  const ticketIds = txn.tickets
-    .filter((tt) => tt.ticket?.id)
-    .map((tt) => tt.ticket.id);
-
-  this.logger.log(
-    `🎟️ Tickets linked to transaction ${reference}: ${JSON.stringify(ticketIds)}`,
-  );
-
-  if (txn.type === 'PURCHASE') {
-    this.logger.log(`🛒 Processing purchase flow for txn ${reference}`);
-    await this.processPurchaseFlow(txn, ticketIds);
-  } else if (txn.type === 'RESALE') {
-    this.logger.log(`♻️ Processing resale flow for txn ${reference}`);
-    await this.processResaleFlow(txn, ticketIds);
-  } else {
-    this.logger.error(`❌ Invalid transaction type: ${txn.type}`);
-    throw new BadRequestException(`Invalid transaction type: ${txn.type}`);
-  }
-
-  this.logger.log(
-    `🎉 Transaction ${reference} verified and processed successfully`,
-  );
-
-  return {
-    message: 'Transaction verified and processed successfully',
-    ticketIds,
-  };
-}
-
 
   // Ticket Code Generation
   private generateTicketCode(): string {
