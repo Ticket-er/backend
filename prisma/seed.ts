@@ -1,4 +1,3 @@
-/* eslint-disable prettier/prettier */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -9,7 +8,7 @@ async function main() {
 
   const hashedPassword = await bcrypt.hash('password123', 10);
 
-  const [ organizer, user1, user2] = await Promise.all([
+  const [admin, organizer, user1, user2] = await Promise.all([
     prisma.user.upsert({
       where: { email: 'admin@example.com' },
       update: {},
@@ -62,51 +61,47 @@ async function main() {
 
   console.log('✅ Created base users');
 
-const events = await Promise.all(
-  Array.from({ length: 3 }).map((_, i) => {
-    const eventName = `Music Festival ${i + 1}`;
-    const eventSlug = `music-festival-${i + 1}`;
-
-    return prisma.event.create({
-      data: {
-        name: eventName,
-        category: "MUSIC",
-        slug: eventSlug, // ✅ unique per event
-        description:
-          "Join us for the biggest music festival of the summer featuring top artists from around the world. Experience three days of non-stop music, food, and fun in the heart of Central Park.",
-        location: "Central Park, New York, NY",
-        date: new Date(`2025-09-${29 + i}T20:00:00Z`),
-        organizerId: organizer.id,
-        primaryFeeBps: 1000, // 10% platform fee
-        resaleFeeBps: 500,   // 5% resale fee
-        royaltyFeeBps: 200,  // 2% royalty fee
-        ticketCategories: {
-          create: [
-            {
-              name: `VVIP ${i + 1}`, // ✅ unique per event
-              price: 5000 + i * 1000,
-              maxTickets: 10,
-              minted: 0,
-            },
-            {
-              name: `VIP ${i + 1}`, // ✅ unique per event
-              price: 3000 + i * 1000,
-              maxTickets: 20,
-              minted: 0,
-            },
-            {
-              name: `Regular ${i + 1}`, // ✅ unique per event
-              price: 1000 + i * 1000,
-              maxTickets: 20,
-              minted: 0,
-            },
-          ],
+  const events = await Promise.all(
+    Array.from({ length: 3 }).map((_, i) =>
+      prisma.event.create({
+        data: {
+          name: `Music Festival ${i + 1}`,
+          category: 'MUSIC',
+          slug: `music-festival-${i + 1}`,
+          description:
+            'Join us for the biggest music festival of the summer featuring top artists from around the world. Experience three days of non-stop music, food, and fun in the heart of Central Park.',
+          location: 'Central Park, New York, NY',
+          date: new Date(`2025-08-${10 + i}T20:00:00Z`),
+          organizerId: organizer.id,
+          primaryFeeBps: 1000, // 10% platform fee
+          resaleFeeBps: 500, // 5% resale fee
+          royaltyFeeBps: 200, // 2% royalty fee
+          ticketCategories: {
+            create: [
+              {
+                name: 'VVIP',
+                price: 5000 + i * 1000,
+                maxTickets: 10,
+                minted: 0,
+              },
+              {
+                name: 'VIP',
+                price: 3000 + i * 1000,
+                maxTickets: 20,
+                minted: 0,
+              },
+              {
+                name: 'Regular',
+                price: 1000 + i * 1000,
+                maxTickets: 20,
+                minted: 0,
+              },
+            ],
+          },
         },
-      },
-    });
-  }),
-);
-
+      }),
+    ),
+  );
 
   console.log('🎉 Created multiple events with ticket categories');
 
@@ -154,7 +149,7 @@ const events = await Promise.all(
         // Create primary purchase transaction
         await prisma.transaction.create({
           data: {
-           reference: `TXN-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            reference: `txn_evt${event.id.slice(0, 8)}_cat${category.id.slice(0, 8)}_${j + 1}`,
             userId: buyer.id,
             eventId: event.id,
             type: 'PURCHASE',
@@ -194,7 +189,6 @@ main()
     console.error('❌ Seed failed:', err);
     process.exit(1);
   })
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   .finally(async () => {
     await prisma.$disconnect();
   });

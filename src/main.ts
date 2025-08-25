@@ -9,7 +9,7 @@ async function bootstrap() {
   // Enable CORS with dynamic origin
   const allowedOrigins = [
     'http://localhost:3000',
-    'https://ticketer-app-staging.vercel.app/',
+    'https://ticketer-app-staging.vercel.app',
   ];
   app.enableCors({
     origin: (origin, callback) => {
