@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import {
   Injectable,
   ConflictException,
@@ -183,7 +184,7 @@ export class AuthService {
     const user = await this.findUserByEmail(dto.email);
     if (!user) throw new NotFoundException('User not found');
 
-    await this.validateOtp(user, dto.otp);
+    // await this.validateOtp(user, dto.otp);
 
     const newHashed = await this.hashPassword(dto.newPassword);
 
